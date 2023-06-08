@@ -1,0 +1,11 @@
+[workspace]
+
+members = [
+    "client-cli", 
+    "client-gui",
+    "client-core",
+    "libsocks",
+    "libtransit",
+    "server-core",
+    "server-cli"
+]
