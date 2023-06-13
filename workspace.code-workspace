@@ -1,0 +1,26 @@
+{
+	"folders": [
+		{
+			"path": "Source/libsocks"
+		},
+		{
+			"path": "Source/server-core"
+		},
+		{
+			"path": "Source/server-cli"
+		},
+		{
+			"path": "Source/libtransit"
+		},
+		{
+			"path": "Source/client-gui"
+		},
+		{
+			"path": "Source/client-core"
+		},
+		{
+			"path": "Source/client-cli"
+		}
+	],
+	"settings": {}
+}
