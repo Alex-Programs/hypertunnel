@@ -2,10 +2,14 @@ use binrw;
 use binrw::{BinReaderExt, BinWriterExt};
 use binrw::io::{Cursor, Seek, SeekFrom};
 
+pub type IPV4 = u32;
+pub type Port = u16;
+pub type ConnID = u32;
+
 #[binrw::binrw]
 #[brw(repr(u8))]
 #[derive(Debug, PartialEq)]
-enum Socks4Command {
+pub enum Socks4Command {
     Connect = 1,
     Bind = 2,
 }
@@ -13,7 +17,7 @@ enum Socks4Command {
 #[binrw::binrw]
 #[brw(repr(u8))]
 #[derive(Debug, PartialEq)]
-enum Socks4Status {
+pub enum Socks4Status {
     Granted = 90,
     Rejected = 91,
     RejectedNoIdentd = 92,
@@ -21,37 +25,37 @@ enum Socks4Status {
 }
 
 #[binrw::binrw]
-struct Socks4ConnectRequest {
-    version: u8,
-    command: Socks4Command,
-    dstport: u16,
-    dstip: u32,
-    userid: binrw::NullString,
+pub struct Socks4ConnectRequest {
+    pub version: u8,
+    pub command: Socks4Command,
+    pub dstport: Port,
+    pub dstip: IPV4,
+    pub userid: binrw::NullString,
 }
 
 #[binrw::binrw]
-struct Socks4ConnectReply {
-    version: u8,
-    status: Socks4Status,
-    dstport: u16,
-    dstip: u32,
+pub struct Socks4ConnectReply {
+    pub version: u8,
+    pub status: Socks4Status,
+    pub dstport: Port,
+    pub dstip: IPV4,
 }
 
 #[binrw::binrw]
-struct Socks4BindRequest {
-    version: u8,
-    command: Socks4Command,
-    dstport: u16,
-    dstip: u32,
-    userid: binrw::NullString,
+pub struct Socks4BindRequest {
+    pub version: u8,
+    pub command: Socks4Command,
+    pub dstport: Port,
+    pub dstip: IPV4,
+    pub userid: binrw::NullString,
 }
 
 #[binrw::binrw]
-struct Socks4BindReply {
-    version: u8,
-    status: Socks4Status,
-    dstport: u16,
-    dstip: u32,
+pub struct Socks4BindReply {
+    pub version: u8,
+    pub status: Socks4Status,
+    pub dstport: Port,
+    pub dstip: IPV4,
 }
 
 
@@ -93,8 +97,6 @@ mod tests {
 
         assert_eq!(writer.into_inner(), expected_data);
     }
-
-    // TODO add tests for Socks4ConnectReply (read, write)
 
     #[test]
     fn check_write_reply() {
