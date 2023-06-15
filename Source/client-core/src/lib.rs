@@ -32,16 +32,20 @@ struct ReturnStreamBuffer {
     data: [u8; BUFFSIZE],
 }
 
+type ReturnInjectorVec = Vec<ReturnStreamBuffer>;
+
 pub fn entrypoint() {
     // We will have a shared to-send queue and a shared received-to-be-returned queue per SOCKS connection using crossbeam. This is given to the TCP SOCKS handler and transit.
     let to_send: Injector<ToSendBuffer> = Injector::new();
-    let return_injector_map: HashMap<libsocks::ConnID, Injector<ReturnStreamBuffer>> = HashMap::new();
+    let return_injector_map: ReturnInjectorVec = Vec::new();
 
     // Initialise the TCP SOCKS handler
 
 }
 
-fn socks_listener(to_send_buffer: &Injector<ToSendBuffer>, return_injector_map: &HashMap<libsocks::ConnID, Injector<ReturnStreamBuffer>>) {
+fn socks_listener(to_send_buffer: &Injector<ToSendBuffer>, return_injector_vec: &ReturnInjectorVec) {
+    let mut next_socks_id: libsocks::ConnID = 0;
+    
     // Listen for incoming TCP connections on port 1080
     let listener = TcpListener::bind("0.0.0.0:1080").unwrap();
 
@@ -65,8 +69,10 @@ fn socks_listener(to_send_buffer: &Injector<ToSendBuffer>, return_injector_map: 
                     continue;
                 }
 
-                // Create the SOCKS ID
-                // TODO
+                let socks_id = next_socks_id;
+                next_socks_id += 1;
+
+                let return_injector = Injector<ReturnStreamBuffer>::new();
             }
             Err(e) => {
                 println!("Error: {}", e);
