@@ -6,6 +6,6 @@ members = [
     "client-core",
     "libsocks",
     "libtransit",
-    "server-core",
-    "server-cli"
+    "server-monolith",
+    "transit-client"
 ]

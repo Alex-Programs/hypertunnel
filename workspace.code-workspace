@@ -4,12 +4,6 @@
 			"path": "Source/libsocks"
 		},
 		{
-			"path": "Source/server-core"
-		},
-		{
-			"path": "Source/server-cli"
-		},
-		{
 			"path": "Source/libtransit"
 		},
 		{
@@ -20,6 +14,12 @@
 		},
 		{
 			"path": "Source/client-cli"
+		},
+		{
+			"path": "Source/server-monolith"
+		},
+		{
+			"path": "Source/transit-client"
 		}
 	],
 	"settings": {}
