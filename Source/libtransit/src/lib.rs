@@ -6,6 +6,12 @@ use rand::Rng;
 pub type Port = u16;
 pub type IPV4 = u32;
 
+pub enum Message {
+    StreamMessage,
+    CreateSocketMessage,
+    CloseSocketMessage,
+}
+
 #[binrw::binrw]
 #[brw(repr(u8))]
 #[derive(Debug, PartialEq)]
