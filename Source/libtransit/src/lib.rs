@@ -18,10 +18,10 @@ pub type IPV4 = u32;
 #[derive(Debug, PartialEq)]
 #[brw(big)]
 pub struct MultipleMessages {
-    #[bw(try_calc(u8::try_from(offsets.len())))]
-    pub offsets_length: u8,
-    #[br(count = offsets_length)]
-    pub offsets: Vec<u32>,
+    #[bw(try_calc(u8::try_from(sizes.len())))]
+    pub sizes_length: u8,
+    #[br(count = sizes_length)]
+    pub sizes: Vec<u32>,
 
     #[bw(try_calc(u32::try_from(data.len())))]
     pub data_length: u32,
@@ -35,7 +35,7 @@ impl MultipleMessages {
             panic!("Cannot encode more than 255 messages into a single buffer.");
         }
     
-        let mut offsets: Vec<u32> = Vec::with_capacity(messages.len());
+        let mut sizes: Vec<u32> = Vec::with_capacity(messages.len());
         let mut data: Vec<u8> = Vec::new();
     
         for message in messages {
@@ -57,19 +57,19 @@ impl MultipleMessages {
                 },
             };
     
-            offsets.push(data.len() as u32);
+            sizes.push(message_data.len() as u32);
             data.extend(message_data);
         }
     
         Self {
-            offsets,
+            sizes,
             data
         }
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
         // Write the data to a multiple messages buffer
-        let buffer = Vec::with_capacity(1 + self.offsets.len() * 4 + self.data.len());
+        let buffer = Vec::with_capacity(1 + self.sizes.len() * 4 + self.data.len());
         let mut writer = Cursor::new(buffer);
 
         writer.write_be(&self).unwrap();
@@ -83,19 +83,29 @@ impl MultipleMessages {
     }
 
     pub fn pull_messages(&self) -> Vec<Message> {
-        let mut messages: Vec<Message> = Vec::with_capacity(self.offsets.len());
+        let mut messages: Vec<Message> = Vec::with_capacity(self.sizes.len());
 
         let mut i = 0;
         let mut base_offset = 0;
+
+        println!("Self.data: {:?} (Length {})", self.data, self.data.len());
+
         loop {
             let data_start = base_offset;
-            let data_end = base_offset + self.offsets[i] as usize;
+            let data_end = base_offset + self.sizes[i] as usize;
+
+            println!("Data start: {}", data_start);
+            println!("Data end: {}", data_end);
+            println!("Sizes: {:?}", self.sizes);
+            println!("Current offset: {}", i);
 
             // Get those bytes
-            let message_data = self.data[data_start..data_end+1].to_vec();
+            let message_data = self.data[data_start..data_end].to_vec();
 
             // Read to a message struct
+            println!("Message data: {:?}", message_data);
             let mut data_reader = Cursor::new(message_data);
+
             let messagetype_reader = self.data[data_start];
 
             let message_type = match messagetype_reader {
@@ -125,7 +135,7 @@ impl MultipleMessages {
             messages.push(message);
 
             // Check if we should stop
-            if i > self.offsets.len() - 1 {
+            if i > self.sizes.len() - 2 {
                 break;
             }
 
@@ -147,6 +157,17 @@ fn test_multiple_message_writing_reading() {
         forwarding_address: 43,
         forwarding_port: 80,
     }));
+
+    // Write message to bytes
+    let mut writer = Cursor::new(Vec::new());
+    writer.write_be(&CreateSocketMessage {
+        message_type: MessageType::CreateSocket,
+        socket_id: 5,
+        forwarding_address: 43,
+        forwarding_port: 80,
+    }).unwrap();
+    let message_bytes = writer.into_inner();
+    println!("Message bytes: {:?}", message_bytes);
 
     messages.push(Message::StreamMessage(StreamMessage {
         message_type: MessageType::SendStreamPacket,
