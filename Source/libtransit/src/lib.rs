@@ -6,14 +6,6 @@ use rand::Rng;
 pub type Port = u16;
 pub type IPV4 = u32;
 
-// We want to encode multiple messages, which could be
-// either a stream, create, or close, into a single buffer.
-// We need to be able to decode the buffer into the list of
-// messages, with the correct data. We should not waste data
-// on padding. We will begin with the length of the offsets list,
-// and then the offsets list, and then the data for each message at
-// the specified offsets from the end of the offsets list.
-
 #[binrw::binrw]
 #[derive(Debug, PartialEq)]
 #[brw(big)]
@@ -88,22 +80,22 @@ impl MultipleMessages {
         let mut i = 0;
         let mut base_offset = 0;
 
-        println!("Self.data: {:?} (Length {})", self.data, self.data.len());
+        //println!("Self.data: {:?} (Length {})", self.data, self.data.len());
 
         loop {
             let data_start = base_offset;
             let data_end = base_offset + self.sizes[i] as usize;
 
-            println!("Data start: {}", data_start);
-            println!("Data end: {}", data_end);
-            println!("Sizes: {:?}", self.sizes);
-            println!("Current offset: {}", i);
+            //println!("Data start: {}", data_start);
+            //println!("Data end: {}", data_end);
+            //println!("Sizes: {:?}", self.sizes);
+            //println!("Current offset: {}", i);
 
             // Get those bytes
             let message_data = self.data[data_start..data_end].to_vec();
 
             // Read to a message struct
-            println!("Message data: {:?}", message_data);
+            //println!("Message data: {:?}", message_data);
             let mut data_reader = Cursor::new(message_data);
 
             let messagetype_reader = self.data[data_start];
@@ -157,17 +149,6 @@ fn test_multiple_message_writing_reading() {
         forwarding_address: 43,
         forwarding_port: 80,
     }));
-
-    // Write message to bytes
-    let mut writer = Cursor::new(Vec::new());
-    writer.write_be(&CreateSocketMessage {
-        message_type: MessageType::CreateSocket,
-        socket_id: 5,
-        forwarding_address: 43,
-        forwarding_port: 80,
-    }).unwrap();
-    let message_bytes = writer.into_inner();
-    println!("Message bytes: {:?}", message_bytes);
 
     messages.push(Message::StreamMessage(StreamMessage {
         message_type: MessageType::SendStreamPacket,
