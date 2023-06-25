@@ -3,10 +3,17 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use libtransit::{Message, CreateSocketMessage, StreamMessage, CloseSocketMessage, MessageType, MultipleMessages};
 
 fn gen_data(size: usize) -> Vec<u8> {
-    Vec::from_iter((0..(size)).map(|_| rand::random::<u8>()))
+    // Generate random data
+    let mut data: Vec<u8> = Vec::with_capacity(size);
+
+    for _ in 0..size {
+        data.push(rand::random::<u8>());
+    }
+
+    data
 }
 
-fn stress_test_multiple_messages(messagecount: u32, data: Vec<u8>) {
+fn gen_messages(messagecount: u32, data: Vec<u8>) -> Vec<Message> {
     let mut messages: Vec<Message> = Vec::new();
 
     for i in 0..messagecount {
@@ -31,6 +38,10 @@ fn stress_test_multiple_messages(messagecount: u32, data: Vec<u8>) {
         }));
     }
 
+    messages
+}
+
+fn stress_test_multiple_messages(messages: Vec<Message>) {
     let multiple_messages = MultipleMessages::from_messages(messages.clone());
 
     let buffer = multiple_messages.to_bytes();
@@ -43,14 +54,28 @@ fn stress_test_multiple_messages(messagecount: u32, data: Vec<u8>) {
 }
 
 fn criterion_benchmark(c: &mut Criterion) {
-    c.bench_function("stress_test_multiple_messages_50mc_100b    (5kb)", |b| b.iter(|| stress_test_multiple_messages(50, gen_data(100))));
-    c.bench_function("stress_test_multiple_messages_50mc_1kb     (50kb)", |b| b.iter(|| stress_test_multiple_messages(50, gen_data(1000))));
-    c.bench_function("stress_test_multiple_messages_50mc_10kb    (500kb)", |b| b.iter(|| stress_test_multiple_messages(50, gen_data(10_000))));
-    c.bench_function("stress_test_multiple_messages_50mc_100kb   (5mb)", |b| b.iter(|| stress_test_multiple_messages(50, gen_data(100_000))));
+    let messages = gen_messages(50, gen_data(100));
+    c.bench_function("stress_test_multiple_messages_50mc_100b    (5kb)", |b| b.iter(|| stress_test_multiple_messages(messages.clone())));
+    
+    let messages = gen_messages(50, gen_data(1000));
+    c.bench_function("stress_test_multiple_messages_50mc_1kb     (50kb)", |b| b.iter(|| stress_test_multiple_messages(messages.clone())));
+    
+    let messages = gen_messages(50, gen_data(10_000));
+    c.bench_function("stress_test_multiple_messages_50mc_10kb    (500kb)", |b| b.iter(|| stress_test_multiple_messages(messages.clone())));
+    
 
-    c.bench_function("stress_test_multiple_messages_10mc_1mb   (10mb)", |b| b.iter(|| stress_test_multiple_messages(10, gen_data(1_000_000))));
-    c.bench_function("stress_test_multiple_messages_10mc_10mb  (100mb)", |b| b.iter(|| stress_test_multiple_messages(10, gen_data(10_000_000))));
-    c.bench_function("stress_test_multiple_messages_10mc_100mb (1000mb)", |b| b.iter(|| stress_test_multiple_messages(10, gen_data(100_000_000))));
+    
+    let messages = gen_messages(50, gen_data(100_000));
+    c.bench_function("stress_test_multiple_messages_50mc_100kb   (5mb)", |b| b.iter(|| stress_test_multiple_messages(messages.clone())));
+
+    let messages = gen_messages(10, gen_data(1_000_000));
+    c.bench_function("stress_test_multiple_messages_10mc_1mb   (10mb)", |b| b.iter(|| stress_test_multiple_messages(messages.clone())));
+    
+    let messages = gen_messages(10, gen_data(10_000_000));
+    c.bench_function("stress_test_multiple_messages_10mc_10mb  (100mb)", |b| b.iter(|| stress_test_multiple_messages(messages.clone())));
+    
+    let messages = gen_messages(10, gen_data(100_000_000));
+    c.bench_function("stress_test_multiple_messages_10mc_100mb (1000mb)", |b| b.iter(|| stress_test_multiple_messages(messages.clone())));
 }
 
 criterion_group!(benches, criterion_benchmark);
