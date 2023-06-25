@@ -6,15 +6,182 @@ use rand::Rng;
 pub type Port = u16;
 pub type IPV4 = u32;
 
+// We want to encode multiple messages, which could be
+// either a stream, create, or close, into a single buffer.
+// We need to be able to decode the buffer into the list of
+// messages, with the correct data. We should not waste data
+// on padding. We will begin with the length of the offsets list,
+// and then the offsets list, and then the data for each message at
+// the specified offsets from the end of the offsets list.
+
+#[binrw::binrw]
+#[derive(Debug, PartialEq)]
+#[brw(big)]
+pub struct MultipleMessages {
+    #[bw(try_calc(u8::try_from(offsets.len())))]
+    pub offsets_length: u8,
+    #[br(count = offsets_length)]
+    pub offsets: Vec<u32>,
+
+    #[bw(try_calc(u32::try_from(data.len())))]
+    pub data_length: u32,
+    #[br(count = data_length)]
+    pub data: Vec<u8>,
+}
+
+impl MultipleMessages {
+    pub fn from_messages(messages: Vec<Message>) -> Self {
+        if messages.len() > u8::MAX as usize {
+            panic!("Cannot encode more than 255 messages into a single buffer.");
+        }
+    
+        let mut offsets: Vec<u32> = Vec::with_capacity(messages.len());
+        let mut data: Vec<u8> = Vec::new();
+    
+        for message in messages {
+            let message_data = match message {
+                Message::StreamMessage(stream_message) => {
+                    let mut writer = Cursor::new(Vec::new());
+                    writer.write_be(&stream_message).unwrap();
+                    writer.into_inner()
+                },
+                Message::CreateSocketMessage(create_socket_message) => {
+                    let mut writer = Cursor::new(Vec::new());
+                    writer.write_be(&create_socket_message).unwrap();
+                    writer.into_inner()
+                },
+                Message::CloseSocketMessage(close_socket_message) => {
+                    let mut writer = Cursor::new(Vec::new());
+                    writer.write_be(&close_socket_message).unwrap();
+                    writer.into_inner()
+                },
+            };
+    
+            offsets.push(data.len() as u32);
+            data.extend(message_data);
+        }
+    
+        Self {
+            offsets,
+            data
+        }
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        // Write the data to a multiple messages buffer
+        let buffer = Vec::with_capacity(1 + self.offsets.len() * 4 + self.data.len());
+        let mut writer = Cursor::new(buffer);
+
+        writer.write_be(&self).unwrap();
+
+        writer.into_inner()
+    }
+
+    pub fn from_bytes(buffer: Vec<u8>) -> Self {
+        let mut reader = Cursor::new(buffer);
+        reader.read_be::<MultipleMessages>().unwrap()
+    }
+
+    pub fn pull_messages(&self) -> Vec<Message> {
+        let mut messages: Vec<Message> = Vec::with_capacity(self.offsets.len());
+
+        let mut i = 0;
+        let mut base_offset = 0;
+        loop {
+            let data_start = base_offset;
+            let data_end = base_offset + self.offsets[i] as usize;
+
+            // Get those bytes
+            let message_data = self.data[data_start..data_end+1].to_vec();
+
+            // Read to a message struct
+            let mut data_reader = Cursor::new(message_data);
+            let messagetype_reader = self.data[data_start];
+
+            let message_type = match messagetype_reader {
+                0 => MessageType::CreateSocket,
+                1 => MessageType::CloseSocket,
+                2 => MessageType::SendStreamPacket,
+                3 => MessageType::ReceiveStreamPacket,
+                _ => panic!("Invalid message type"),
+            };
+
+            let message = match message_type {
+                MessageType::CreateSocket => {
+                    Message::CreateSocketMessage(data_reader.read_be::<CreateSocketMessage>().unwrap())
+                },
+                MessageType::CloseSocket => {
+                    Message::CloseSocketMessage(data_reader.read_be::<CloseSocketMessage>().unwrap())
+                },
+                MessageType::SendStreamPacket => {
+                    Message::StreamMessage(data_reader.read_be::<StreamMessage>().unwrap())
+                },
+                MessageType::ReceiveStreamPacket => {
+                    Message::StreamMessage(data_reader.read_be::<StreamMessage>().unwrap())
+                },
+            };
+
+            // Push to messages
+            messages.push(message);
+
+            // Check if we should stop
+            if i > self.offsets.len() - 1 {
+                break;
+            }
+
+            i = i + 1;
+            base_offset = data_end;
+        }
+
+        messages
+    }
+}
+
+#[test]
+fn test_multiple_message_writing_reading() {
+    let mut messages: Vec<Message> = Vec::new();
+
+    messages.push(Message::CreateSocketMessage(CreateSocketMessage {
+        message_type: MessageType::CreateSocket,
+        socket_id: 5,
+        forwarding_address: 43,
+        forwarding_port: 80,
+    }));
+
+    messages.push(Message::StreamMessage(StreamMessage {
+        message_type: MessageType::SendStreamPacket,
+        socket_id: 5,
+        send_buffer_size: 0,
+        receive_buffer_size: 0,
+        packet_data: vec![1, 2, 3, 4, 5],
+    }));
+
+    messages.push(Message::CloseSocketMessage(CloseSocketMessage {
+        message_type: MessageType::CloseSocket,
+        socket_id: 5,
+    }));
+
+    let multiple_messages = MultipleMessages::from_messages(messages.clone());
+
+    let buffer = multiple_messages.to_bytes();
+
+    let multiple_messages = MultipleMessages::from_bytes(buffer);
+
+    let messages = multiple_messages.pull_messages();
+
+    assert_eq!(messages, messages);
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub enum Message {
-    StreamMessage,
-    CreateSocketMessage,
-    CloseSocketMessage,
+    StreamMessage(StreamMessage),
+    CreateSocketMessage(CreateSocketMessage),
+    CloseSocketMessage(CloseSocketMessage),
 }
 
 #[binrw::binrw]
 #[brw(repr(u8))]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum MessageType {
     CreateSocket = 0,
     CloseSocket = 1,
@@ -23,7 +190,7 @@ pub enum MessageType {
 }
 
 #[binrw::binrw]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 #[brw(big)]
 pub struct StreamMessage {
     pub message_type: MessageType,
@@ -85,7 +252,7 @@ fn test_stream_message() {
 }
 
 #[binrw::binrw]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 #[brw(big)]
 pub struct CreateSocketMessage {
     pub message_type: MessageType,
@@ -140,7 +307,7 @@ fn test_create_socket_message() {
 }
 
 #[binrw::binrw]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 #[brw(big)]
 pub struct CloseSocketMessage {
     pub message_type: MessageType,
