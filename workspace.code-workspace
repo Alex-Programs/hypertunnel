@@ -19,7 +19,10 @@
 			"path": "Source/server-monolith"
 		},
 		{
-			"path": "Source/transit-client"
+			"path": "Source/libsecrets"
+		},
+		{
+			"path": "Source/client-transit"
 		}
 	],
 	"settings": {}

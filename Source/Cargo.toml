@@ -4,8 +4,9 @@ members = [
     "client-cli", 
     "client-gui",
     "client-core",
+    "client-transit",
     "libsocks",
     "libtransit",
     "server-monolith",
-    "transit-client"
+    "libsecrets"
 ]
