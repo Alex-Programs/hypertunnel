@@ -2,11 +2,12 @@ use chacha20poly1305::{
     aead::{Aead, AeadCore, KeyInit, OsRng, Key},
     ChaCha20Poly1305, Nonce, Error
 };
+use sha2::{Sha256, Digest};
 
-use generic_array::GenericArray;
-
-pub fn form_key(key: &[u8]) -> Key<ChaCha20Poly1305> {
-    GenericArray::clone_from_slice(key)
+pub fn form_key(data: &[u8]) -> Key<ChaCha20Poly1305> {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    hasher.finalize()
 }
 
 fn random_nonce() -> Nonce {
