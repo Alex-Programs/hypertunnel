@@ -1,10 +1,16 @@
 use chacha20poly1305::{
     aead::{Aead, AeadCore, KeyInit, OsRng, Key},
-    ChaCha20Poly1305, Nonce, Error
+    ChaCha20Poly1305, Nonce
 };
+
+pub use chacha20poly1305::Error;
+pub type EncryptionError = Error;
+
 use sha2::{Sha256, Digest};
 
-pub fn form_key(data: &[u8]) -> Key<ChaCha20Poly1305> {
+pub type EncryptionKey = Key<ChaCha20Poly1305>;
+
+pub fn form_key(data: &[u8]) -> EncryptionKey {
     let mut hasher = Sha256::new();
     hasher.update(data);
     hasher.finalize()
@@ -14,7 +20,7 @@ fn random_nonce() -> Nonce {
     ChaCha20Poly1305::generate_nonce(&mut OsRng)
 }
 
-pub fn encrypt(data: &[u8], key: &Key<ChaCha20Poly1305>) -> Result<Vec<u8>, Error> {
+pub fn encrypt(data: &[u8], key: &EncryptionKey) -> Result<Vec<u8>, EncryptionError> {
     let nonce = random_nonce();
     let cipher = ChaCha20Poly1305::new(key);
     let mut encrypted = cipher.encrypt(&nonce, data.as_ref())?;
@@ -22,7 +28,7 @@ pub fn encrypt(data: &[u8], key: &Key<ChaCha20Poly1305>) -> Result<Vec<u8>, Erro
     Ok(encrypted)
 }
 
-pub fn decrypt(data: &[u8], key: &Key<ChaCha20Poly1305>) -> Result<Vec<u8>, Error> {
+pub fn decrypt(data: &[u8], key: &EncryptionKey) -> Result<Vec<u8>, EncryptionError> {
     let nonce = Nonce::from_slice(&data[data.len() - 12..]); // Extract 12-byte nonce
     let data = &data[..data.len() - 12]; // Remove 12-byte nonce
 
@@ -52,5 +58,11 @@ mod tests {
         let key = form_key(b"Hello World!");
         let decrypted = decrypt(&encrypted, &key);
         assert!(decrypted.is_err());
+    }
+
+    #[test]
+    fn test_form_key() {
+        let key = form_key(b"Hello, world!");
+        assert_eq!(key.len(), 32);
     }
 }
