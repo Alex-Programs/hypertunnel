@@ -9,11 +9,6 @@ mod builder;
 pub use self::builder::TransitSocketBuilder;
 use reqwest::header::{HeaderMap, HeaderValue};
 
-pub struct ServerStatistics {
-    pub to_reply: usize, // Bytes
-    pub to_send: usize, // Bytes
-}
-
 pub struct TransitSocket {
     target: String, // Base URL, incl. protocol
     key: EncryptionKey, // Encryption key for libsecrets
@@ -21,11 +16,16 @@ pub struct TransitSocket {
     send_buffer: RwLock<Vec<libtransit::Message>>, // Messages to send
     recv_buffer: RwLock<Vec<libtransit::Message>>, // Messages received, but not yet sent to user of this socket
     server_statistics: ServerStatistics, // Statistics about the server to inform client congestion control
-    client_identifier: String, // Identifier for this client, used as a cookie
+    client_identifier: [u8; 32], // Identifier for this client, used as a cookie
     hybrid_client_count: usize, // Number of hybrid clients (Both push and pull)
     pull_client_count: usize, // Number of pull clients
     timeout_time: usize, // Time in seconds before a request is considered timed out
     headers: HeaderMap, // Headers to send with requests. Includes client identifier
+}
+
+pub struct ServerStatistics {
+    pub to_reply: usize, // Bytes
+    pub to_send: usize, // Bytes
 }
 
 pub enum TransitInitError {

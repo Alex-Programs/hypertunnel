@@ -10,3 +10,5 @@ members = [
     "server-monolith",
     "libsecrets"
 ]
+
+workspace.resolver = "2"

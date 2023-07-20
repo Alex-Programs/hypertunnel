@@ -10,6 +10,7 @@ pub struct Config {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct User {
+    pub name: String,
     pub password: String,
 }
 

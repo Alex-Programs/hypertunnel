@@ -10,7 +10,7 @@ pub struct TransitSocketBuilder {
     target: Option<String>,
     key: Option<EncryptionKey>,
     password: Option<String>,
-    client_identifier: Option<String>,
+    client_identifier: Option<[u8; 16]>,
     hybrid_client_count: Option<usize>,
     pull_client_count: Option<usize>,
     timeout_time: Option<usize>,
@@ -50,7 +50,7 @@ impl TransitSocketBuilder {
         self
     }
 
-    pub fn with_client_identifier(mut self, client_identifier: String) -> Self {
+    pub fn with_client_identifier(mut self, client_identifier: [u8; 16]) -> Self {
         self.client_identifier = Some(client_identifier);
         self
     }
@@ -85,9 +85,9 @@ impl TransitSocketBuilder {
             Some(client_identifier) => client_identifier,
             None => {
                 // Create a random client identifier string
-                let mut client_identifier = String::new();
-                for _ in 0..16 {
-                    client_identifier.push(rand::random::<u8>() as char);
+                let mut client_identifier = [0; 16];
+                for i in 0..17 {
+                    client_identifier[i] = rand::random::<u8>();
                 }
                 client_identifier
             }

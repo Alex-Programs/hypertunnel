@@ -1,7 +1,6 @@
 use binrw;
 use binrw::{BinReaderExt, BinWriterExt};
-use binrw::io::{Cursor, Seek, SeekFrom};
-use rand::Rng;
+use binrw::io::Cursor;
 
 pub type Port = u16;
 pub type IPV4 = u32;
