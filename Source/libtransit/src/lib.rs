@@ -1,6 +1,7 @@
 use binrw;
 use binrw::{BinReaderExt, BinWriterExt};
 use binrw::io::Cursor;
+use rand::Rng; // Not unused - ignore vscode
 
 pub type Port = u16;
 pub type IPV4 = u32;

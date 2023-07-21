@@ -16,11 +16,12 @@ pub struct TransitSocket {
     send_buffer: RwLock<Vec<libtransit::Message>>, // Messages to send
     recv_buffer: RwLock<Vec<libtransit::Message>>, // Messages received, but not yet sent to user of this socket
     server_statistics: ServerStatistics, // Statistics about the server to inform client congestion control
-    client_identifier: [u8; 32], // Identifier for this client, used as a cookie
+    client_identifier: [u8; 16], // Identifier for this client, used as a cookie
     hybrid_client_count: usize, // Number of hybrid clients (Both push and pull)
     pull_client_count: usize, // Number of pull clients
     timeout_time: usize, // Time in seconds before a request is considered timed out
     headers: HeaderMap, // Headers to send with requests. Includes client identifier
+    is_initialized: bool, // Whether the socket has been initialized by greeting the server
 }
 
 pub struct ServerStatistics {
@@ -28,6 +29,7 @@ pub struct ServerStatistics {
     pub to_send: usize, // Bytes
 }
 
+#[derive(Debug)]
 pub enum TransitInitError {
     EncryptionError(libsecrets::EncryptionError),
     RequestError(reqwest::Error),
@@ -43,10 +45,15 @@ impl From<libsecrets::EncryptionError> for TransitInitError {
 }
 
 impl TransitSocket {
+    pub fn connect(&mut self) -> Result<(), TransitInitError> {
+        self.greet_server()?;
+        self.is_initialized = true;
+        Ok(())
+    }
+    
     // TODO this is unusual traffic, not very believable.
     // Change this to "Get a PNG image" incl. header etc, with the
     // encrypted data being some form of additional token in the cookies
-    
     fn greet_server(&self) -> Result<(), TransitInitError> {
         let mut data = "Hello!".to_string();
         // Pad with random amount of spaces

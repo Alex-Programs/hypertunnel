@@ -23,6 +23,9 @@
 		},
 		{
 			"path": "Source/client-transit"
+		},
+		{
+			"path": "Source/integration-tests"
 		}
 	],
 	"settings": {}

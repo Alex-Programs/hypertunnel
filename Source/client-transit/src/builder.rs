@@ -5,6 +5,7 @@ use crate::ServerStatistics;
 use std::sync::{RwLock, Condvar};
 use rand;
 use reqwest::header::{HeaderMap, HeaderValue};
+use hex;
 
 pub struct TransitSocketBuilder {
     target: Option<String>,
@@ -86,7 +87,7 @@ impl TransitSocketBuilder {
             None => {
                 // Create a random client identifier string
                 let mut client_identifier = [0; 16];
-                for i in 0..17 {
+                for i in 0..16 {
                     client_identifier[i] = rand::random::<u8>();
                 }
                 client_identifier
@@ -117,7 +118,8 @@ impl TransitSocketBuilder {
             to_send: 0,
         };
 
-        let headers = generate_headers(client_identifier.clone(), target.clone());
+        let client_id_string = hex::encode(client_identifier);
+        let headers = generate_headers(client_id_string, target.clone());
 
         TransitSocket {
             target,
@@ -131,13 +133,14 @@ impl TransitSocketBuilder {
             pull_client_count,
             timeout_time,
             headers,
+            is_initialized: false,
         }
     }
 }
 
 fn generate_headers(client_identifier: String, referer: String) -> HeaderMap {
     let mut headers = HeaderMap::new();
-    headers.insert("Cookie", HeaderValue::from_str(&format!("session_token={}", client_identifier)).unwrap());
+    headers.insert("Cookie", HeaderValue::from_str(&format!("token={}", client_identifier)).unwrap());
     headers.insert("Accept-Language", HeaderValue::from_str("en-GB,en;q=0.5").unwrap());
     headers.insert("Cache-Control", HeaderValue::from_str("no-cache").unwrap());
     headers.insert("Connection", HeaderValue::from_str("keep-alive").unwrap());

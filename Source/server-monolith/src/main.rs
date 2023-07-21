@@ -2,6 +2,7 @@ use actix_web::{get, post, web, App, HttpResponse, HttpServer, HttpRequest, Resp
 use actix_web::web::Bytes;
 use libsecrets::{EncryptionKey, self};
 use rand::Rng;
+use hex;
 
 use debug_print::{
     debug_print as dprint,
@@ -48,21 +49,22 @@ async fn client_greeting(app_state: web::Data<AppState>,req: HttpRequest, body_b
     // Check if token exists and if so, parse it
     let token = match token {
         Some(token) => {
-            // Check it's 16 bytes of u8s
-            let token = token.value().to_string();
-            if token.len() != 16 {
+            // Get as string
+            let token_hex = token.value().to_string();
+            dprintln!("Hex token: {}", token_hex);
+
+            // Convert to bytes
+            let token_bytes = hex::decode(token_hex).unwrap();
+
+            // Check it's the correct length
+            if token_bytes.len() != 16 {
                 // Return 404
+                dprintln!("Token is not 16 bytes!");
                 return HttpResponse::NotFound().body("No page exists");
             }
 
-            // Convert to bytes
-            let token_bytes = token.as_bytes();
-
             // Convert to array
-            let mut token = [0u8; 16];
-            for i in 0..16 {
-                token[i] = token_bytes[i];
-            }
+            let token: [u8; 16] = token_bytes[..16].try_into().unwrap();
 
             dprintln!("Token correct!: {:?}", token);
 
@@ -71,7 +73,7 @@ async fn client_greeting(app_state: web::Data<AppState>,req: HttpRequest, body_b
         }
         None => {
             // Return 404 - resist active probing by not telling the client what went wrong
-            dprintln!("No token supplied!");
+            dprintln!("No token (client identifier) supplied!");
             return HttpResponse::NotFound().body("No page exists");
         }
     };
@@ -163,6 +165,25 @@ async fn main() -> std::io::Result<()> {
     println!("Hashing user keys...");
     let mut users = Vec::new();
     for user in &configuration.users {
+        // Check for malformed config
+        let mut duplicate_user_before = false;
+        let mut duplicate_password_before = false;
+
+        for other_user in &configuration.users {
+            if user.name == other_user.name {
+                if duplicate_user_before {
+                    panic!("Duplicate user '{}'!", user.name);
+                }
+                duplicate_user_before = true;
+            }
+            if user.password == other_user.password && user.name != other_user.name {
+                if duplicate_password_before {
+                    panic!("Duplicate password '{}'!", user.password);
+                }
+                duplicate_password_before = true;
+            }
+        }
+
         let key = libsecrets::form_key(user.password.as_bytes());
 
         users.push(User {
