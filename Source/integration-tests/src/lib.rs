@@ -10,6 +10,7 @@ mod tests {
             .with_target("http://localhost:8000".to_string())
             .with_password("12345".to_string())
             .with_timeout_time(1)
+            .with_client_name("Integration Testing".to_string())
             .build();
 
         socket.connect().expect("Failed to connect to server");

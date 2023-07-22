@@ -97,11 +97,14 @@ async fn client_greeting(app_state: web::Data<AppState>,req: HttpRequest, body_b
         };
 
         // Check if decrypted data contains "Hello!"
-        if decrypted.contains(&"Hello!".to_string()) {
+        if decrypted.contains(&"Hello. Protocol version:".to_string()) {
             // Set key
             key = Some(user.key.clone()); // We've found it!
             dprintln!("Key found! User: {}", user.name);
+            dprintln!("Decrypted data: {}", decrypted);
             break;
+        } else {
+            dprintln!("Data decrypted, but does not contain client hello!");
         }
     }
 
@@ -135,13 +138,7 @@ async fn client_greeting(app_state: web::Data<AppState>,req: HttpRequest, body_b
     dprintln!("Formed response: {:?}", encrypted);
 
     // Add it to the sessions
-    let socket = TransitSocket {
-        key,
-        client_statistics: ClientStatistics {
-            to_send: 0,
-            to_reply: 0,
-        },
-    };
+    let socket = TransitSocket::new(key);
 
     app_state.sessions.insert(token, socket);
 

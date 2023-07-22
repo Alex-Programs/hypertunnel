@@ -2,7 +2,7 @@ use libsecrets::{self, EncryptionKey};
 use libtransit;
 use rand::Rng;
 use reqwest::blocking::Client;
-use std::sync::{RwLock, Condvar};
+use std::{sync::{RwLock, Condvar}, env};
 
 
 mod builder;
@@ -22,6 +22,7 @@ pub struct TransitSocket {
     timeout_time: usize, // Time in seconds before a request is considered timed out
     headers: HeaderMap, // Headers to send with requests. Includes client identifier
     is_initialized: bool, // Whether the socket has been initialized by greeting the server
+    client_name: String, // Name of the client
 }
 
 pub struct ServerStatistics {
@@ -55,10 +56,18 @@ impl TransitSocket {
     // Change this to "Get a PNG image" incl. header etc, with the
     // encrypted data being some form of additional token in the cookies
     fn greet_server(&self) -> Result<(), TransitInitError> {
-        let mut data = "Hello!".to_string();
-        // Pad with random amount of spaces
+        let mut data = format!("Hello. Protocol version: {}, client-transit version: {}, client-name: {}", "0", env!("CARGO_PKG_VERSION"), self.client_name);
+        
+        // Find minimum padding amount such that it's at least 512 bytes
+        let length = data.len();
+        let min_padding = 512 - length;
+
+        // Find maximum padding amount such that it's at most 1024 bytes
+        let max_padding = 1024 - length;
+
+        // Add random padding up to 1024 bytes
         let mut rng = rand::thread_rng();
-        let amount = rng.gen_range(0..100);
+        let amount = rng.gen_range(min_padding..max_padding);
         data = data + &" ".repeat(amount);
 
         let encrypted = libsecrets::encrypt(data.as_bytes(), &self.key)?;

@@ -10,6 +10,8 @@ actix-web = "4"
 
 libtransit = { path = "../libtransit" }
 libsecrets = { path = "../libsecrets" }
+
+hashbrown = "0.14"
 dashmap = "5"
 
 once_cell = "1.18.0"

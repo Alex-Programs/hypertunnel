@@ -15,6 +15,7 @@ pub struct TransitSocketBuilder {
     hybrid_client_count: Option<usize>,
     pull_client_count: Option<usize>,
     timeout_time: Option<usize>,
+    client_name: Option<String>,
 }
 
 impl TransitSocketBuilder {
@@ -27,6 +28,7 @@ impl TransitSocketBuilder {
             hybrid_client_count: None,
             pull_client_count: None,
             timeout_time: None,
+            client_name: None,
         }
     }
 
@@ -68,6 +70,11 @@ impl TransitSocketBuilder {
 
     pub fn with_timeout_time(mut self, timeout_time: usize) -> Self {
         self.timeout_time = Some(timeout_time);
+        self
+    }
+
+    pub fn with_client_name(mut self, client_name: String) -> Self {
+        self.client_name = Some(client_name);
         self
     }
 
@@ -121,6 +128,11 @@ impl TransitSocketBuilder {
         let client_id_string = hex::encode(client_identifier);
         let headers = generate_headers(client_id_string, target.clone());
 
+        let client_name = match self.client_name {
+            Some(client_name) => client_name,
+            None => panic!("Client name not set"),
+        };
+
         TransitSocket {
             target,
             key,
@@ -134,6 +146,7 @@ impl TransitSocketBuilder {
             timeout_time,
             headers,
             is_initialized: false,
+            client_name,
         }
     }
 }
