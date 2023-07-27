@@ -5,6 +5,7 @@ use rand::Rng; // Not unused - ignore vscode
 
 pub type Port = u16;
 pub type IPV4 = u32;
+pub type SocketID = u32;
 
 #[binrw::binrw]
 #[derive(Debug, PartialEq)]
@@ -156,6 +157,7 @@ fn test_multiple_message_writing_reading() {
         send_buffer_size: 0,
         receive_buffer_size: 0,
         packet_data: vec![1, 2, 3, 4, 5],
+        sequence_number: 0,
     }));
 
     messages.push(Message::CloseSocketMessage(CloseSocketMessage {
@@ -196,7 +198,8 @@ pub enum MessageType {
 #[brw(big)]
 pub struct StreamMessage {
     pub message_type: MessageType,
-    pub socket_id: u32,
+    pub socket_id: SocketID,
+    pub sequence_number: u32,
 
     pub send_buffer_size: u32,
     pub receive_buffer_size: u32,
@@ -208,13 +211,14 @@ pub struct StreamMessage {
 }
 
 impl StreamMessage {
-    pub fn encoded(socket_id: u32, send_buffer_size: u32, receive_buffer_size: u32, packet_data: Vec<u8>) -> Vec<u8> {
+    pub fn encoded(socket_id: SocketID, send_buffer_size: u32, receive_buffer_size: u32, packet_data: Vec<u8>) -> Vec<u8> {
         let data = Self {
             message_type: MessageType::SendStreamPacket,
             socket_id,
             send_buffer_size,
             receive_buffer_size,
             packet_data,
+            sequence_number: 0,
         };
 
         let mut writer = Cursor::new(Vec::new());
@@ -240,6 +244,7 @@ fn test_stream_message() {
         send_buffer_size: 0,
         receive_buffer_size: 0,
         packet_data: packet_data,
+        sequence_number: 0,
     };
 
     let mut writer = Cursor::new(Vec::new());
@@ -258,13 +263,13 @@ fn test_stream_message() {
 #[brw(big)]
 pub struct CreateSocketMessage {
     pub message_type: MessageType,
-    pub socket_id: u32,
+    pub socket_id: SocketID,
     pub forwarding_address: IPV4,
     pub forwarding_port: Port,
 }
 
 impl CreateSocketMessage {
-    pub fn encoded(socket_id: u32, forwarding_address: IPV4, forwarding_port: Port) -> Vec<u8> {
+    pub fn encoded(socket_id: SocketID, forwarding_address: IPV4, forwarding_port: Port) -> Vec<u8> {
         let data = Self {
             message_type: MessageType::CreateSocket,
             socket_id,
@@ -313,11 +318,11 @@ fn test_create_socket_message() {
 #[brw(big)]
 pub struct CloseSocketMessage {
     pub message_type: MessageType,
-    pub socket_id: u32,
+    pub socket_id: SocketID,
 }
 
 impl CloseSocketMessage {
-    pub fn encoded(socket_id: u32) -> Vec<u8> {
+    pub fn encoded(socket_id: SocketID) -> Vec<u8> {
         let data = Self {
             message_type: MessageType::CloseSocket,
             socket_id,

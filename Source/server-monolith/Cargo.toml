@@ -23,3 +23,5 @@ debug_print = "1"
 hex = "0.4"
 
 num_cpus = "1.16"
+
+tokio = {version = "1", features = ["sync"]}
