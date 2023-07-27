@@ -1,11 +1,13 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
+use num_cpus;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Config {
     pub host: String,
     pub port: u16,
     pub users: Vec<User>,
+    pub workers: usize,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -20,8 +22,13 @@ impl Default for Config {
             host: "127.0.0.1".to_string(),
             port: 80,
             users: Vec::new(),
+            workers: get_thread_count() as usize,
         }
     }
+}
+
+fn get_thread_count() -> usize {
+    num_cpus::get()
 }
 
 pub fn load_config() -> Config {

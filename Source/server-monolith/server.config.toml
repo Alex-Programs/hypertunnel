@@ -1,5 +1,7 @@
 host = "127.0.0.1"
 port = 8000
+workers = 32
+
 users = [
     {"name" = "Test", "password" = "12345"}    
 ]

@@ -199,13 +199,14 @@ async fn main() -> std::io::Result<()> {
         users,
     });
 
-    println!("Starting server at {}:{}", configuration.host, configuration.port);
+    println!("Starting server at {}:{} with {} workers", configuration.host, configuration.port, configuration.workers);
     HttpServer::new(move || { // Closure - inline function. Move keyword moves ownership of configuration into the closure
             App::new()
                 .app_data(appstate.clone()) // Insert appdata
                 .service(index) // Insert index route
                 .service(client_greeting) // Insert client_greeting route
         })
+        .workers(configuration.workers) // Set number of workers
         .bind((configuration.host, configuration.port))? // Bind to host and port
         .run() // Execute
         .await // Wait for completion with the asynchronous runtime
