@@ -90,6 +90,7 @@ fn test_upstream_message() {
 pub struct DownStreamMessage {
     pub socket_id: SocketID,
     pub message_sequence_number: u32,
+    pub has_remote_closed: bool,
     pub payload: Vec<u8>,
 }
 
@@ -111,6 +112,7 @@ fn test_downstream_message() {
     let message = DownStreamMessage {
         socket_id: 0,
         message_sequence_number: 0,
+        has_remote_closed: false,
         payload: large_payload,
     };
 
@@ -215,6 +217,7 @@ fn test_multiple_messages_downstream() {
             socket_id: i,
             message_sequence_number: i,
             payload: large_payload.clone(),
+            has_remote_closed: false,
         };
 
         stream_messages.push(message);
