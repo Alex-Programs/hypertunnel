@@ -3,6 +3,7 @@ use libtransit;
 use rand::Rng;
 use reqwest::blocking::Client;
 use std::{sync::{RwLock, Condvar}, env};
+use libtransit::ServerStatistics;
 
 
 mod builder;
@@ -14,7 +15,7 @@ pub struct TransitSocket {
     key: EncryptionKey, // Encryption key for libsecrets
     control_client: Client, // Does the initial encryption agreement
     send_buffer: RwLock<Vec<libtransit::Message>>, // Messages to send
-    recv_buffer: RwLock<Vec<libtransit::Message>>, // Messages received, but not yet sent to user of this socket
+    recv_buffer: RwLock<Vec<libtransit::DownStreamMessage>>, // Messages received, but not yet sent to user of this socket
     server_statistics: ServerStatistics, // Statistics about the server to inform client congestion control
     client_identifier: [u8; 16], // Identifier for this client, used as a cookie
     hybrid_client_count: usize, // Number of hybrid clients (Both push and pull)
@@ -23,11 +24,6 @@ pub struct TransitSocket {
     headers: HeaderMap, // Headers to send with requests. Includes client identifier
     is_initialized: bool, // Whether the socket has been initialized by greeting the server
     client_name: String, // Name of the client
-}
-
-pub struct ServerStatistics {
-    pub to_reply: usize, // Bytes
-    pub to_send: usize, // Bytes
 }
 
 #[derive(Debug)]

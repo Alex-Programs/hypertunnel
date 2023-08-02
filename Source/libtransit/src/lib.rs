@@ -1,5 +1,6 @@
 use rand::Rng; // Not unused - ignore vscode
 use borsh::{BorshSerialize, BorshDeserialize};
+use std::collections::HashMap;
 
 pub type Port = u16;
 pub type IPV4 = u32;
@@ -232,4 +233,103 @@ fn test_multiple_messages_downstream() {
     let out = MultipleMessagesDownstream::decode_from_bytes(&mut buffer).unwrap();
 
     assert_eq!(multiple_messages, out);
+}
+
+// ================================================= //
+
+#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
+pub struct ServerMetaDownstream {
+    pub bytes_to_reply_to_client: usize,
+    pub bytes_to_send_to_remote: usize,
+    pub messages_to_reply_to_client: usize,
+    pub messages_to_send_to_remote: usize,
+    pub cpu_usage: f32,
+    pub memory_usage_kb: usize,
+    pub num_open_sockets: usize,
+    pub streams: HashMap<SocketID, ServerStreamInfo>,
+}
+
+impl ServerMetaDownstream {
+    pub fn encoded(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let data = self.try_to_vec()?;
+        Ok(data)
+    }
+
+    pub fn decode_from_bytes(data: &mut Vec<u8>) -> Result<Self, std::io::Error> { // Borsh returns std::io::Error
+        Self::try_from_slice(data)
+    }
+}
+
+#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
+pub struct ServerStreamInfo {
+    pub has_terminated: bool,
+    pub errors: Vec<String>,
+    pub logs: Vec<String>,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
+pub struct ClientMetaUpstream {
+    pub bytes_to_send_to_remote: usize,
+    pub bytes_to_reply_to_client: usize,
+    pub messages_to_send_to_remote: usize,
+    pub messages_to_reply_to_client: usize,
+}
+
+impl ClientMetaUpstream {
+    pub fn encoded(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let data = self.try_to_vec()?;
+        Ok(data)
+    }
+
+    pub fn decode_from_bytes(data: &mut Vec<u8>) -> Result<Self, std::io::Error> { // Borsh returns std::io::Error
+        Self::try_from_slice(data)
+    }
+}
+
+#[test]
+fn test_server_downstream_meta() {
+    let mut streams = HashMap::new();
+
+    for i in 1..100 {
+        let stream_info = ServerStreamInfo {
+            has_terminated: i % 2 == 0,
+            errors: vec![format!("error {}", i)],
+            logs: vec![format!("log {}", i), format!("another log {}", i)],
+        };
+    
+        streams.insert(i, stream_info);
+    }
+
+    let server_meta = ServerMetaDownstream {
+        bytes_to_reply_to_client: 50,
+        bytes_to_send_to_remote: 32423,
+        messages_to_reply_to_client: 4283,
+        messages_to_send_to_remote: 237482,
+        cpu_usage: 4.2,
+        memory_usage_kb: 2091,
+        num_open_sockets: 42,
+        streams,
+    };
+
+    let mut buffer = server_meta.encoded().unwrap();
+
+    let out = ServerMetaDownstream::decode_from_bytes(&mut buffer).unwrap();
+
+    assert_eq!(server_meta, out);
+}
+
+#[test]
+fn test_client_upstream_meta() {
+    let client_meta = ClientMetaUpstream {
+        bytes_to_send_to_remote: 32423,
+        bytes_to_reply_to_client: 50,
+        messages_to_send_to_remote: 237482,
+        messages_to_reply_to_client: 4283,
+    };
+
+    let mut buffer = client_meta.encoded().unwrap();
+
+    let out = ClientMetaUpstream::decode_from_bytes(&mut buffer).unwrap();
+
+    assert_eq!(client_meta, out);
 }
