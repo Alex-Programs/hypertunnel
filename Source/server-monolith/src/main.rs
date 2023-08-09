@@ -1,8 +1,11 @@
+use actix_web::dev::Server;
 use actix_web::{get, post, web, App, HttpResponse, HttpServer, HttpRequest, Responder};
 use actix_web::web::Bytes;
 use libsecrets::{EncryptionKey, self};
 use rand::Rng;
 use hex;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 use debug_print::{
     debug_print as dprint,
@@ -15,15 +18,19 @@ use dashmap::DashMap;
 
 mod config;
 mod transit_socket;
-use transit_socket::{TransitSocket, ClientStatistics};
+use transit_socket::{TransitSocket};
+
+use libtransit::{ServerStreamInfo, DeclarationToken, ServerMetaDownstream, MultipleMessagesUpstream, ServerMessageDownstream};
 
 // State passed to all request handlers
 struct AppState {
     config: config::Config, // Configuration
-    sessions: DashMap<[u8; 16], TransitSocket>, // Currently-in-use sessions with the
+    sessions: DashMap<DeclarationToken, RwLock<TransitSocket>>, // Currently-in-use sessions with the
     //                                             client identifier as the key
     users: Vec<User>, // Users from the configuration with the passwords preprocessed into keys
     //                   for faster initial handshake when there are many users
+    meta_return_data: Arc<DashMap<DeclarationToken, RwLock<ServerStreamInfo>>>,
+    current_sessions: Vec<DeclarationToken>,
 }
 
 // Simple user definition
@@ -33,10 +40,141 @@ struct User {
     key: EncryptionKey,
 }
 
+async fn form_meta_response(app_state: &web::Data<AppState>) -> ServerMetaDownstream {
+    let mut streams = Vec::new();
+    for session in &app_state.current_sessions {
+        let stream = app_state.meta_return_data.get(session);
+        let stream = match stream {
+            Some(stream) => stream,
+            None => continue,
+        };
+        streams.push(stream.read().await.clone());
+    }
+
+    ServerMetaDownstream {
+        bytes_to_reply_to_client: 0, // TODO
+        bytes_to_send_to_remote: 0, // TODO
+        messages_to_reply_to_client: 0, // TODO
+        messages_to_send_to_remote: 0, // TODO
+        cpu_usage: 0.0, // TODO
+        memory_usage_kb: 0, // TODO
+        num_open_sockets: 0, // TODO
+        streams: streams,
+    }
+}
+
 // Temporary - used to check the server works
 #[get("/")]
 async fn index() -> impl Responder {
     HttpResponse::Ok().body("Hello world!")
+}
+
+#[post("/access")] // TODO dynamic path with multiple http methods for better stegonography
+async fn data_exchange(app_state: web::Data<AppState>, req: HttpRequest, body_bytes: Bytes) -> impl Responder {
+    dprintln!("Received requst to data exchange");
+
+    // Get token
+    let token = req.cookie("token");
+
+    let token = match token {
+        Some(token) => {
+            // Get as string
+            let token_hex = token.value().to_string();
+            dprintln!("Hex token: {}", token_hex);
+
+            // Convert to bytes
+            let token_bytes = hex::decode(token_hex).unwrap();
+
+            // Check it's the correct length
+            if token_bytes.len() != 16 {
+                // Return 404
+                dprintln!("Token is not 16 bytes!");
+                return HttpResponse::NotFound().body("No page exists");
+            }
+
+            // Convert to array
+            let token: DeclarationToken = token_bytes[..16].try_into().unwrap();
+
+            dprintln!("Token correct!: {:?}", token);
+
+            // Implicit return
+            token
+        }
+        None => {
+            // Return 404 - resist active probing by not telling the client what went wrong
+            dprintln!("No token (client identifier) supplied!");
+            return HttpResponse::NotFound().body("No page exists");
+        }
+    };
+
+    // Get body
+    let body = body_bytes;
+
+    // Get transit socket
+    let session = app_state.sessions.get(&token);
+    if session.is_none() {
+        // Return 404 - resist active probing by not telling the client what went wrong
+        dprintln!("No session found for token!");
+        return HttpResponse::NotFound().body("No page exists");
+    }
+    let session = session.unwrap();
+
+    // Decrypt body
+    let key = session.read().await.key;
+
+    let mut decrypted = match libsecrets::decrypt(&body, &key) {
+        Ok(decrypted) => decrypted, // If it succeeds, pull out content from Result<>
+        Err(_) => {
+            // Return 404 - resist active probing by not telling the client what went wrong
+            dprintln!("Failed to decrypt body!");
+            return HttpResponse::NotFound().body("No page exists");
+        }
+    };
+
+    // Parse into MultipleMessagesUpstream
+    let messages: MultipleMessagesUpstream = match libtransit::MultipleMessagesUpstream::decode_from_bytes(&mut decrypted) {
+        Ok(messages) => messages, // If it succeeds, pull out content from Result<>
+        Err(_) => {
+            // Return 404 - resist active probing by not telling the client what went wrong
+            dprintln!("Failed to parse decrypted body into MultipleMessagesUpstream!");
+            return HttpResponse::NotFound().body("No page exists");
+        }
+    };
+
+    // Send on to transit socket
+    let downstream_messages = {
+        let mut session_unlocked = session.write().await;
+
+        for message in messages.stream_messages {
+            session_unlocked.process_upstream_message(message);
+        }
+
+        for message in messages.close_socket_messages {
+            session_unlocked.process_close_socket_message(message);
+        }
+
+        // Now wait for return data. TODO replace the entire following section with a dynamic steganographic iterator that pretends to be an image/video/etc while pulling data...
+        // but that's for the obfuscation section. For now, just return data.
+        session_unlocked.get_data(4096, 50).await
+    };
+
+    // Get meta information
+    let meta = form_meta_response(&app_state).await;
+
+    // Form response
+    let response = ServerMessageDownstream {
+        messages: downstream_messages,
+        metadata: meta,
+    };
+
+    // Encode response
+    let response_bytes = response.encoded().unwrap(); // TODO handle error
+
+    // Encrypt response
+    let encrypted = libsecrets::encrypt(&response_bytes, &key).unwrap(); // TODO handle error
+
+    // Return response
+    HttpResponse::Ok().body(encrypted)
 }
 
 // First request, which associates a client identifier with a key and proves the server is legitimate
@@ -64,7 +202,7 @@ async fn client_greeting(app_state: web::Data<AppState>,req: HttpRequest, body_b
             }
 
             // Convert to array
-            let token: [u8; 16] = token_bytes[..16].try_into().unwrap();
+            let token: DeclarationToken = token_bytes[..16].try_into().unwrap();
 
             dprintln!("Token correct!: {:?}", token);
 
@@ -138,9 +276,9 @@ async fn client_greeting(app_state: web::Data<AppState>,req: HttpRequest, body_b
     dprintln!("Formed response: {:?}", encrypted);
 
     // Add it to the sessions
-    let socket = TransitSocket::new(key);
+    let socket = TransitSocket::new(key, app_state.meta_return_data.clone(), token.clone());
 
-    app_state.sessions.insert(token, socket);
+    app_state.sessions.insert(token, RwLock::new(socket));
 
     dprintln!("Added session to sessions; returning response");
 
@@ -193,10 +331,14 @@ async fn main() -> std::io::Result<()> {
     }
 
     // Create appstate that will be provided to requests
+    let meta_return_data = Arc::new(DashMap::new());
+
     let appstate = web::Data::new(AppState {
         config: configuration.clone(),
         sessions: DashMap::new(),
         users,
+        current_sessions: Vec::new(),
+        meta_return_data,
     });
 
     println!("Starting server at {}:{} with {} workers", configuration.host, configuration.port, configuration.workers);

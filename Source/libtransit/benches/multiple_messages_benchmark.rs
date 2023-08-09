@@ -1,6 +1,6 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 
-use libtransit::{Message, UpStreamMessage, DownStreamMessage, MultipleMessagesUpstream, MultipleMessagesDownstream, CloseSocketMessage};
+use libtransit::{Message, UpStreamMessage, DownStreamMessage, MultipleMessagesUpstream, CloseSocketMessage};
 
 fn gen_data(size: usize) -> Vec<u8> {
     // Generate random data
