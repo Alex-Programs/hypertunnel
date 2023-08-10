@@ -1,7 +1,7 @@
 use libsecrets::{self, EncryptionKey};
-use reqwest::blocking::Client;
+use reqwest::Client;
 use crate::TransitSocket;
-use crate::ServerStatistics;
+use crate::ServerMetaDownstream
 use std::sync::{RwLock, Condvar};
 use rand;
 use reqwest::header::{HeaderMap, HeaderValue};
@@ -120,9 +120,15 @@ impl TransitSocketBuilder {
         let send_buffer = RwLock::new(Vec::new());
         let recv_buffer = RwLock::new(Vec::new());
 
-        let server_statistics = ServerStatistics {
-            to_reply: 0,
-            to_send: 0,
+        let server_meta = ServerMetaDownstream {
+            bytes_to_reply_to_client: 0,
+            bytes_to_send_to_remote: 0,
+            messages_to_reply_to_client: 0,
+            messages_to_send_to_remote: 0,
+            cpu_usage: 0.0,
+            memory_usage_kb: 0,
+            num_open_sockets: 0,
+            streams: Vec::new(),
         };
 
         let client_id_string = hex::encode(client_identifier);
@@ -139,7 +145,7 @@ impl TransitSocketBuilder {
             control_client,
             send_buffer,
             recv_buffer,
-            server_statistics,
+            server_meta,
             client_identifier,
             hybrid_client_count,
             pull_client_count,

@@ -1,23 +1,34 @@
 use libsecrets::{self, EncryptionKey};
 use libtransit;
 use rand::Rng;
-use reqwest::blocking::Client;
+use reqwest::Client;
 use std::{sync::{RwLock, Condvar}, env};
-use libtransit::ServerStatistics;
-
+use libtransit::{
+    ClientMessageUpstream,
+    ServerMessageDownstream,
+    ClientMetaUpstream,
+    ServerMetaDownstream,
+    UpStreamMessage,
+    DownStreamMessage,
+    SocketID,
+    DeclarationToken
+};
+use tokio::sync::mpsc::{self, Sender, Receiver};
 
 mod builder;
 pub use self::builder::TransitSocketBuilder;
 use reqwest::header::{HeaderMap, HeaderValue};
 
+use std::collections::HashMap;
+
 pub struct TransitSocket {
     target: String, // Base URL, incl. protocol
     key: EncryptionKey, // Encryption key for libsecrets
     control_client: Client, // Does the initial encryption agreement
-    send_buffer: RwLock<Vec<libtransit::Message>>, // Messages to send
-    recv_buffer: RwLock<Vec<libtransit::DownStreamMessage>>, // Messages received, but not yet sent to user of this socket
-    server_statistics: ServerStatistics, // Statistics about the server to inform client congestion control
-    client_identifier: [u8; 16], // Identifier for this client, used as a cookie
+    data_receive: Receiver<UpStreamMessage>, // Receive data from the server
+    socks_data_send: HashMap<SocketID, Sender<DownStreamMessage>>, // Send data to the SOCKS handler
+    server_meta: ServerMetaDownstream, // Statistics about the server to inform client congestion control
+    client_identifier: DeclarationToken, // Identifier for this client, used as a cookie
     hybrid_client_count: usize, // Number of hybrid clients (Both push and pull)
     pull_client_count: usize, // Number of pull clients
     timeout_time: usize, // Time in seconds before a request is considered timed out
@@ -42,8 +53,8 @@ impl From<libsecrets::EncryptionError> for TransitInitError {
 }
 
 impl TransitSocket {
-    pub fn connect(&mut self) -> Result<(), TransitInitError> {
-        self.greet_server()?;
+    pub async fn connect(&mut self) -> Result<(), TransitInitError> {
+        self.greet_server().await?;
         self.is_initialized = true;
         Ok(())
     }
@@ -51,7 +62,7 @@ impl TransitSocket {
     // TODO this is unusual traffic, not very believable.
     // Change this to "Get a PNG image" incl. header etc, with the
     // encrypted data being some form of additional token in the cookies
-    fn greet_server(&self) -> Result<(), TransitInitError> {
+    async fn greet_server(&self) -> Result<(), TransitInitError> {
         let mut data = format!("Hello. Protocol version: {}, client-transit version: {}, client-name: {}", "0", env!("CARGO_PKG_VERSION"), self.client_name);
         
         // Find minimum padding amount such that it's at least 512 bytes
@@ -71,7 +82,8 @@ impl TransitSocket {
         let response = self.control_client.post(&format!("{}/submit", self.target))
             .body(encrypted)
             .headers(self.headers.clone())
-            .send();
+            .send()
+            .await;
 
         match response {
             Ok(response) => {
@@ -79,7 +91,7 @@ impl TransitSocket {
                     return Err(TransitInitError::ConnectionDenied);
                 }
                 // Try to decrypt the response
-                let encrypted = response.bytes();
+                let encrypted = response.bytes().await;
                 match encrypted {
                     Ok(encrypted) => {
                         let decrypted = libsecrets::decrypt(&encrypted, &self.key)?;

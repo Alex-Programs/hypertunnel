@@ -14,6 +14,12 @@ pub enum Socks4Command {
     Bind = 2,
 }
 
+#[derive(Debug, PartialEq)]
+pub enum Socks4Request {
+    Connect(Socks4ConnectRequest),
+    Bind(Socks4BindRequest),
+}
+
 #[binrw::binrw]
 #[brw(repr(u8))]
 #[derive(Debug, PartialEq)]
@@ -25,6 +31,7 @@ pub enum Socks4Status {
 }
 
 #[binrw::binrw]
+#[derive(Debug, PartialEq)]
 pub struct Socks4ConnectRequest {
     pub version: u8,
     pub command: Socks4Command,
@@ -34,6 +41,7 @@ pub struct Socks4ConnectRequest {
 }
 
 #[binrw::binrw]
+#[derive(Debug, PartialEq)]
 pub struct Socks4ConnectReply {
     pub version: u8,
     pub status: Socks4Status,
@@ -42,6 +50,7 @@ pub struct Socks4ConnectReply {
 }
 
 #[binrw::binrw]
+#[derive(Debug, PartialEq)]
 pub struct Socks4BindRequest {
     pub version: u8,
     pub command: Socks4Command,
@@ -51,6 +60,7 @@ pub struct Socks4BindRequest {
 }
 
 #[binrw::binrw]
+#[derive(Debug, PartialEq)]
 pub struct Socks4BindReply {
     pub version: u8,
     pub status: Socks4Status,
@@ -58,10 +68,55 @@ pub struct Socks4BindReply {
     pub dstip: IPV4,
 }
 
+#[derive(Debug)]
+pub enum DecodeCommandError {
+    InvalidCommand,
+    BinrwError(binrw::Error),
+}
+
+pub fn decode_socks_request(data: &[u8]) -> Result<Socks4Request, DecodeCommandError> {
+    // Get type based on second byte
+    let command_type = match data[1] {
+        0x01 => Socks4Command::Connect,
+        0x02 => Socks4Command::Bind,
+        _ => {
+            return Err(DecodeCommandError::InvalidCommand)
+        },
+    };
+
+    match command_type {
+        Socks4Command::Connect => {
+            let mut cursor = Cursor::new(data);
+            let request: Socks4ConnectRequest = cursor.read_be().map_err(|e| DecodeCommandError::BinrwError(e))?;
+            Ok(Socks4Request::Connect(request))
+        },
+        Socks4Command::Bind => {
+            let mut cursor = Cursor::new(data);
+            let request: Socks4BindRequest = cursor.read_be().map_err(|e| DecodeCommandError::BinrwError(e))?;
+            Ok(Socks4Request::Bind(request))
+        },
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn check_decode_request() {
+        let sample_data = [
+            0x04, 0x01, 0x00, 0x50, 0x00, 0x00, 0x00, 0x01, 0x61, 0x62, 0x63, 0x64, 0x00
+        ];
+
+        let request = decode_socks_request(&sample_data).unwrap();
+        assert_eq!(request, Socks4Request::Connect(Socks4ConnectRequest {
+            version: 4,
+            command: Socks4Command::Connect,
+            dstport: 80,
+            dstip: 1,
+            userid: binrw::NullString::from("abcd"),
+        }));
+    }
 
     #[test]
     fn check_parse_connect() {
