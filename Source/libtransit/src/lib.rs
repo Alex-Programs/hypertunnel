@@ -312,8 +312,8 @@ impl ServerMessageDownstream {
 
 #[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug)]
 pub struct ClientMessageUpstream {
-    metadata: ClientMetaUpstream,
-    messages: MultipleMessagesUpstream,
+    pub metadata: ClientMetaUpstream,
+    pub messages: MultipleMessagesUpstream,
 }
 
 impl ClientMessageUpstream {

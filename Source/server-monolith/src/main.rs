@@ -64,6 +64,28 @@ async fn form_meta_response(app_state: &web::Data<AppState>) -> ServerMetaDownst
     }
 }
 
+fn parse_token(token_hex: String) -> Option<DeclarationToken> {
+    dprintln!("Hex token: {}", token_hex);
+
+    // Convert to bytes
+    let token_bytes = hex::decode(token_hex).unwrap();
+
+    // Check it's the correct length
+    if token_bytes.len() != 16 {
+        // Return 404
+        dprintln!("Token is not 16 bytes!");
+        return None;
+    }
+
+    // Convert to array
+    let token: DeclarationToken = token_bytes[..16].try_into().unwrap();
+
+    dprintln!("Token correct!: {:?}", token);
+
+    // Implicit return
+    Some(token)
+}
+
 // Temporary - used to check the server works
 #[get("/")]
 async fn index() -> impl Responder {
@@ -71,7 +93,7 @@ async fn index() -> impl Responder {
 }
 
 #[post("/upload")]
-async fn data_exchange(
+async fn upstream_data(
     app_state: web::Data<AppState>,
     req: HttpRequest,
     body_bytes: Bytes,
@@ -83,27 +105,14 @@ async fn data_exchange(
 
     let token = match token {
         Some(token) => {
-            // Get as string
-            let token_hex = token.value().to_string();
-            dprintln!("Hex token: {}", token_hex);
-
-            // Convert to bytes
-            let token_bytes = hex::decode(token_hex).unwrap();
-
-            // Check it's the correct length
-            if token_bytes.len() != 16 {
-                // Return 404
-                dprintln!("Token is not 16 bytes!");
-                return HttpResponse::NotFound().body("No page exists");
+            match parse_token(token.value().to_string()) {
+                Some(token) => token,
+                None => {
+                    // Return 404 - resist active probing by not telling the client what went wrong
+                    dprintln!("Token is invalid!");
+                    return HttpResponse::NotFound().body("No page exists");
+                }
             }
-
-            // Convert to array
-            let token: DeclarationToken = token_bytes[..16].try_into().unwrap();
-
-            dprintln!("Token correct!: {:?}", token);
-
-            // Implicit return
-            token
         }
         None => {
             // Return 404 - resist active probing by not telling the client what went wrong
@@ -175,6 +184,103 @@ async fn data_exchange(
     HttpResponse::Ok().body(encrypted)
 }
 
+#[get("/download")]
+async fn downstream_data(
+    app_state: web::Data<AppState>,
+    req: HttpRequest,
+    body_bytes: Bytes,
+) -> impl Responder {
+    dprintln!("Received request to download");
+
+    // Get token
+    let token = req.cookie("token");
+
+    let token = match token {
+        Some(token) => {
+            match parse_token(token.value().to_string()) {
+                Some(token) => token,
+                None => {
+                    // Return 404 - resist active probing by not telling the client what went wrong
+                    dprintln!("Token is invalid!");
+                    return HttpResponse::NotFound().body("No page exists");
+                }
+            }
+        }
+        None => {
+            // Return 404 - resist active probing by not telling the client what went wrong
+            dprintln!("No token (client identifier) supplied!");
+            return HttpResponse::NotFound().body("No page exists");
+        }
+    };
+
+    // Get transit socket
+    let session = app_state.sessions.get(&token);
+    if session.is_none() {
+        // Return 404 - resist active probing by not telling the client what went wrong
+        dprintln!("No session found for token!");
+        return HttpResponse::NotFound().body("No page exists");
+    }
+    let session = session.unwrap();
+
+    // Get body
+    let body = body_bytes;
+
+    // Decrypt body
+    let key = session.read().await.key;
+
+    let mut decrypted = match libsecrets::decrypt(&body, &key) {
+        Ok(decrypted) => decrypted, // If it succeeds, pull out content from Result<>
+        Err(_) => {
+            // Return 404 - resist active probing by not telling the client what went wrong
+            dprintln!("Failed to decrypt body!");
+            return HttpResponse::NotFound().body("No page exists");
+        }
+    };
+
+    // Parse into ClientMessageUpstream
+    let upstream: ClientMessageUpstream =
+        match libtransit::ClientMessageUpstream::decode_from_bytes(&mut decrypted) {
+            Ok(upstream) => upstream, // If it succeeds, pull out content from Result<>
+            Err(_) => {
+                // Return 404 - resist active probing by not telling the client what went wrong
+                dprintln!("Failed to parse decrypted body into ClientMessageUpstream");
+                return HttpResponse::NotFound().body("No page exists");
+            }
+        };
+
+    // Send on to transit socket
+    {
+        let mut session_unlocked = session.write().await;
+
+        // Send messages on
+        for message in upstream.messages.stream_messages {
+            session_unlocked.process_upstream_message(message).await;
+        }
+
+        for message in upstream.messages.close_socket_messages {
+            session_unlocked.process_close_socket_message(message).await;
+        }
+    }
+
+    // Get meta information
+    let meta = form_meta_response(&app_state).await;
+
+    // Form response
+    let response = ServerMessageDownstream {
+        messages: Vec::new(),
+        metadata: meta,
+    };
+
+    // Encode response
+    let response_bytes = response.encoded().unwrap(); // TODO handle error
+
+    // Encrypt response
+    let encrypted = libsecrets::encrypt(&response_bytes, &key).unwrap(); // TODO handle error
+
+    // Return response
+    HttpResponse::Ok().body(encrypted)
+}
+
 // First request, which associates a client identifier with a key and proves the server is legitimate
 #[post("/submit")]
 async fn client_greeting(
@@ -183,33 +289,20 @@ async fn client_greeting(
     body_bytes: Bytes,
 ) -> impl Responder {
     dprintln!("Received request to /submit");
-    // Get cookie for client identifier
+    
+    // Get token
     let token = req.cookie("token");
 
-    // Check if token exists and if so, parse it
     let token = match token {
         Some(token) => {
-            // Get as string
-            let token_hex = token.value().to_string();
-            dprintln!("Hex token: {}", token_hex);
-
-            // Convert to bytes
-            let token_bytes = hex::decode(token_hex).unwrap();
-
-            // Check it's the correct length
-            if token_bytes.len() != 16 {
-                // Return 404
-                dprintln!("Token is not 16 bytes!");
-                return HttpResponse::NotFound().body("No page exists");
+            match parse_token(token.value().to_string()) {
+                Some(token) => token,
+                None => {
+                    // Return 404 - resist active probing by not telling the client what went wrong
+                    dprintln!("Token is invalid!");
+                    return HttpResponse::NotFound().body("No page exists");
+                }
             }
-
-            // Convert to array
-            let token: DeclarationToken = token_bytes[..16].try_into().unwrap();
-
-            dprintln!("Token correct!: {:?}", token);
-
-            // Implicit return
-            token
         }
         None => {
             // Return 404 - resist active probing by not telling the client what went wrong
@@ -354,6 +447,8 @@ async fn main() -> std::io::Result<()> {
             .app_data(appstate.clone()) // Insert appdata
             .service(index) // Insert index route
             .service(client_greeting) // Insert client_greeting route
+            .service(upstream_data)
+            .service(downstream_data)
     })
     .workers(configuration.workers) // Set number of workers
     .bind((configuration.host, configuration.port))? // Bind to host and port
