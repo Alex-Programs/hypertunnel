@@ -1,30 +1,31 @@
 use actix_web::dev::Server;
-use actix_web::{get, post, web, App, HttpResponse, HttpServer, HttpRequest, Responder};
 use actix_web::web::Bytes;
-use libsecrets::{EncryptionKey, self};
-use rand::Rng;
+use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use hex;
+use libsecrets::{self, EncryptionKey};
+use rand::Rng;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use debug_print::{
-    debug_print as dprint,
+    debug_eprint as deprint, debug_eprintln as deprintln, debug_print as dprint,
     debug_println as dprintln,
-    debug_eprint as deprint,
-    debug_eprintln as deprintln,
 };
 
 use dashmap::DashMap;
 
 mod config;
 mod transit_socket;
-use transit_socket::{TransitSocket};
+use transit_socket::TransitSocket;
 
-use libtransit::{ServerStreamInfo, DeclarationToken, ServerMetaDownstream, MultipleMessagesUpstream, ServerMessageDownstream};
+use libtransit::{
+    ClientMessageUpstream, DeclarationToken, MultipleMessagesUpstream, ServerMessageDownstream,
+    ServerMetaDownstream, ServerStreamInfo,
+};
 
 // State passed to all request handlers
 struct AppState {
-    config: config::Config, // Configuration
+    config: config::Config,                                     // Configuration
     sessions: DashMap<DeclarationToken, RwLock<TransitSocket>>, // Currently-in-use sessions with the
     //                                             client identifier as the key
     users: Vec<User>, // Users from the configuration with the passwords preprocessed into keys
@@ -52,13 +53,13 @@ async fn form_meta_response(app_state: &web::Data<AppState>) -> ServerMetaDownst
     }
 
     ServerMetaDownstream {
-        bytes_to_reply_to_client: 0, // TODO
-        bytes_to_send_to_remote: 0, // TODO
+        bytes_to_reply_to_client: 0,    // TODO
+        bytes_to_send_to_remote: 0,     // TODO
         messages_to_reply_to_client: 0, // TODO
-        messages_to_send_to_remote: 0, // TODO
-        cpu_usage: 0.0, // TODO
-        memory_usage_kb: 0, // TODO
-        num_open_sockets: 0, // TODO
+        messages_to_send_to_remote: 0,  // TODO
+        cpu_usage: 0.0,                 // TODO
+        memory_usage_kb: 0,             // TODO
+        num_open_sockets: 0,            // TODO
         streams: streams,
     }
 }
@@ -69,9 +70,13 @@ async fn index() -> impl Responder {
     HttpResponse::Ok().body("Hello world!")
 }
 
-#[post("/access")] // TODO dynamic path with multiple http methods for better stegonography
-async fn data_exchange(app_state: web::Data<AppState>, req: HttpRequest, body_bytes: Bytes) -> impl Responder {
-    dprintln!("Received requst to data exchange");
+#[post("/upload")]
+async fn data_exchange(
+    app_state: web::Data<AppState>,
+    req: HttpRequest,
+    body_bytes: Bytes,
+) -> impl Responder {
+    dprintln!("Received request to upload");
 
     // Get token
     let token = req.cookie("token");
@@ -107,9 +112,6 @@ async fn data_exchange(app_state: web::Data<AppState>, req: HttpRequest, body_by
         }
     };
 
-    // Get body
-    let body = body_bytes;
-
     // Get transit socket
     let session = app_state.sessions.get(&token);
     if session.is_none() {
@@ -118,6 +120,9 @@ async fn data_exchange(app_state: web::Data<AppState>, req: HttpRequest, body_by
         return HttpResponse::NotFound().body("No page exists");
     }
     let session = session.unwrap();
+
+    // Get body
+    let body = body_bytes;
 
     // Decrypt body
     let key = session.read().await.key;
@@ -131,27 +136,20 @@ async fn data_exchange(app_state: web::Data<AppState>, req: HttpRequest, body_by
         }
     };
 
-    // Parse into MultipleMessagesUpstream
-    let messages: MultipleMessagesUpstream = match libtransit::MultipleMessagesUpstream::decode_from_bytes(&mut decrypted) {
-        Ok(messages) => messages, // If it succeeds, pull out content from Result<>
-        Err(_) => {
-            // Return 404 - resist active probing by not telling the client what went wrong
-            dprintln!("Failed to parse decrypted body into MultipleMessagesUpstream!");
-            return HttpResponse::NotFound().body("No page exists");
-        }
-    };
+    // Parse into ClientMessageUpstream
+    let upstream: ClientMessageUpstream =
+        match libtransit::ClientMessageUpstream::decode_from_bytes(&mut decrypted) {
+            Ok(upstream) => upstream, // If it succeeds, pull out content from Result<>
+            Err(_) => {
+                // Return 404 - resist active probing by not telling the client what went wrong
+                dprintln!("Failed to parse decrypted body into ClientMessageUpstream");
+                return HttpResponse::NotFound().body("No page exists");
+            }
+        };
 
     // Send on to transit socket
     let downstream_messages = {
         let mut session_unlocked = session.write().await;
-
-        for message in messages.stream_messages {
-            session_unlocked.process_upstream_message(message);
-        }
-
-        for message in messages.close_socket_messages {
-            session_unlocked.process_close_socket_message(message);
-        }
 
         // Now wait for return data. TODO replace the entire following section with a dynamic steganographic iterator that pretends to be an image/video/etc while pulling data...
         // but that's for the obfuscation section. For now, just return data.
@@ -179,7 +177,11 @@ async fn data_exchange(app_state: web::Data<AppState>, req: HttpRequest, body_by
 
 // First request, which associates a client identifier with a key and proves the server is legitimate
 #[post("/submit")]
-async fn client_greeting(app_state: web::Data<AppState>,req: HttpRequest, body_bytes: Bytes) -> impl Responder {
+async fn client_greeting(
+    app_state: web::Data<AppState>,
+    req: HttpRequest,
+    body_bytes: Bytes,
+) -> impl Responder {
     dprintln!("Received request to /submit");
     // Get cookie for client identifier
     let token = req.cookie("token");
@@ -218,14 +220,14 @@ async fn client_greeting(app_state: web::Data<AppState>,req: HttpRequest, body_b
 
     // Get body
     let body = body_bytes.to_vec();
-    
+
     // Iterate through users trying their keys. TODO consider Rayon here for performance
     let mut key: Option<EncryptionKey> = None;
     for user in &app_state.users {
         // Attempt to decrypt body with user's key
         let decrypted = match libsecrets::decrypt(&body, &user.key) {
             Ok(decrypted) => decrypted, // If it succeeds, pull out content from Result<>
-            Err(_) => continue, // If it fails, try the next user
+            Err(_) => continue,         // If it fails, try the next user
         };
 
         // Convert to string. It should always be valid ASCII, and UTF-8 is a superset of ASCII
@@ -267,7 +269,8 @@ async fn client_greeting(app_state: web::Data<AppState>,req: HttpRequest, body_b
     // Encrypt response
     let encrypted = match libsecrets::encrypt(response_text.as_bytes(), &key) {
         Ok(encrypted) => encrypted,
-        Err(_) => { // This should never happen, but if it does, return 404
+        Err(_) => {
+            // This should never happen, but if it does, return 404
             // Return 404
             return HttpResponse::NotFound().body("No page exists");
         }
@@ -341,15 +344,19 @@ async fn main() -> std::io::Result<()> {
         meta_return_data,
     });
 
-    println!("Starting server at {}:{} with {} workers", configuration.host, configuration.port, configuration.workers);
-    HttpServer::new(move || { // Closure - inline function. Move keyword moves ownership of configuration into the closure
-            App::new()
-                .app_data(appstate.clone()) // Insert appdata
-                .service(index) // Insert index route
-                .service(client_greeting) // Insert client_greeting route
-        })
-        .workers(configuration.workers) // Set number of workers
-        .bind((configuration.host, configuration.port))? // Bind to host and port
-        .run() // Execute
-        .await // Wait for completion with the asynchronous runtime
+    println!(
+        "Starting server at {}:{} with {} workers",
+        configuration.host, configuration.port, configuration.workers
+    );
+    HttpServer::new(move || {
+        // Closure - inline function. Move keyword moves ownership of configuration into the closure
+        App::new()
+            .app_data(appstate.clone()) // Insert appdata
+            .service(index) // Insert index route
+            .service(client_greeting) // Insert client_greeting route
+    })
+    .workers(configuration.workers) // Set number of workers
+    .bind((configuration.host, configuration.port))? // Bind to host and port
+    .run() // Execute
+    .await // Wait for completion with the asynchronous runtime
 }

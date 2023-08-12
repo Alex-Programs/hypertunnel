@@ -1,6 +1,7 @@
 use libsocks;
 use client_transit;
 use tokio::net::TcpListener;
+use tokio::sync::mpsc::{self, Sender, Receiver};
 
 struct ClientArguments {
     listen_address: String,
@@ -28,4 +29,6 @@ async fn listen_and_relay(arguments: ClientArguments) {
             return;
         }
     }
+
+
 }
