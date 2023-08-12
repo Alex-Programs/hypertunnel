@@ -9,3 +9,4 @@ edition = "2021"
 libsocks = {path = "../libsocks"}
 client-transit = {path = "../client-transit"}
 tokio = { version = "1.30.0", features = ["net"] }
+libtransit = {path = "../libtransit"}

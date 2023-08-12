@@ -1,18 +1,18 @@
 use libsecrets::{self, EncryptionKey};
 use reqwest::Client;
 use crate::TransitSocket;
-use crate::ServerMetaDownstream
-use std::sync::{RwLock, Condvar};
+use crate::ServerMetaDownstream;
 use rand;
 use reqwest::header::{HeaderMap, HeaderValue};
 use hex;
+use std::collections::HashMap;
 
 pub struct TransitSocketBuilder {
     target: Option<String>,
     key: Option<EncryptionKey>,
     password: Option<String>,
     client_identifier: Option<[u8; 16]>,
-    hybrid_client_count: Option<usize>,
+    push_client_count: Option<usize>,
     pull_client_count: Option<usize>,
     timeout_time: Option<usize>,
     client_name: Option<String>,
@@ -25,7 +25,7 @@ impl TransitSocketBuilder {
             key: None,
             password: None,
             client_identifier: None,
-            hybrid_client_count: None,
+            push_client_count: None,
             pull_client_count: None,
             timeout_time: None,
             client_name: None,
@@ -58,8 +58,8 @@ impl TransitSocketBuilder {
         self
     }
 
-    pub fn with_hybrid_client_count(mut self, hybrid_client_count: usize) -> Self {
-        self.hybrid_client_count = Some(hybrid_client_count);
+    pub fn with_push_client_count(mut self, push_client_count: usize) -> Self {
+        self.push_client_count = Some(push_client_count);
         self
     }
 
@@ -101,14 +101,14 @@ impl TransitSocketBuilder {
             }
         };
 
-        let hybrid_client_count = match self.hybrid_client_count {
-            Some(hybrid_client_count) => hybrid_client_count,
-            None => 4,
+        let push_client_count = match self.push_client_count {
+            Some(push_client_count) => push_client_count,
+            None => 6,
         };
 
         let pull_client_count = match self.pull_client_count {
             Some(pull_client_count) => pull_client_count,
-            None => 1,
+            None => 6,
         };
 
         let timeout_time = match self.timeout_time {
@@ -117,8 +117,6 @@ impl TransitSocketBuilder {
         };
 
         let control_client = Client::new();
-        let send_buffer = RwLock::new(Vec::new());
-        let recv_buffer = RwLock::new(Vec::new());
 
         let server_meta = ServerMetaDownstream {
             bytes_to_reply_to_client: 0,
@@ -143,16 +141,15 @@ impl TransitSocketBuilder {
             target,
             key,
             control_client,
-            send_buffer,
-            recv_buffer,
             server_meta,
             client_identifier,
-            hybrid_client_count,
+            push_client_count,
             pull_client_count,
             timeout_time,
             headers,
             is_initialized: false,
             client_name,
+            tcp_return_passers: HashMap::new(),
         }
     }
 }

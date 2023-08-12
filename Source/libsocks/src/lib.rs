@@ -49,6 +49,14 @@ pub struct Socks4ConnectReply {
     pub dstip: IPV4,
 }
 
+impl Socks4ConnectReply {
+    pub fn to_binary(&self) -> Vec<u8> {
+        let mut writer = Cursor::new(Vec::new());
+        writer.write_be(self).unwrap();
+        writer.into_inner()
+    }
+}
+
 #[binrw::binrw]
 #[derive(Debug, PartialEq)]
 pub struct Socks4BindRequest {

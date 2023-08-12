@@ -233,7 +233,7 @@ async fn tcp_handler_task(mut arguments: TCPHandlerArguments) {
                     ),
                     &arguments.meta_return_data,
                     &arguments.our_declaration_token,
-                );
+                ).await;
                 return;
             }
         };

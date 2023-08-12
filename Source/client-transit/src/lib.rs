@@ -25,16 +25,15 @@ pub struct TransitSocket {
     target: String, // Base URL, incl. protocol
     key: EncryptionKey, // Encryption key for libsecrets
     control_client: Client, // Does the initial encryption agreement
-    data_receive: Receiver<UpStreamMessage>, // Receive data from the server
-    socks_data_send: HashMap<SocketID, Sender<DownStreamMessage>>, // Send data to the SOCKS handler
     server_meta: ServerMetaDownstream, // Statistics about the server to inform client congestion control
     client_identifier: DeclarationToken, // Identifier for this client, used as a cookie
-    hybrid_client_count: usize, // Number of hybrid clients (Both push and pull)
+    push_client_count: usize, // Number of hybrid clients (Both push and pull)
     pull_client_count: usize, // Number of pull clients
     timeout_time: usize, // Time in seconds before a request is considered timed out
     headers: HeaderMap, // Headers to send with requests. Includes client identifier
     is_initialized: bool, // Whether the socket has been initialized by greeting the server
     client_name: String, // Name of the client
+    tcp_return_passers: HashMap<SocketID, Sender<DownStreamMessage>>, // Passers for TCP return traffic
 }
 
 #[derive(Debug)]
@@ -50,6 +49,11 @@ impl From<libsecrets::EncryptionError> for TransitInitError {
     fn from(error: libsecrets::EncryptionError) -> Self {
         Self::EncryptionError(error)
     }
+}
+
+pub struct DownstreamBackpasser {
+    pub socket_id: libtransit::SocketID,
+    pub sender: Sender<DownStreamMessage>,
 }
 
 impl TransitSocket {
@@ -129,5 +133,19 @@ impl TransitSocket {
         // We should be ready to talk to the server now
 
         Ok(())
+    }
+
+    async fn push_handler(to_send_passer: Receiver<Vec<UpStreamMessage>>) {
+
+    }
+
+    async fn pull_handler() {
+
+    }
+
+    pub async fn handle_transit(&mut self, upstreamPasserRcv: Receiver<UpStreamMessage>, messagePasserPasserReceive: Receiver<DownstreamBackpasser>) {
+        // Spawn requisite push and pull handlers
+        // Create a channel for the push handler to send to so that a random not-in-use push handler
+        // can grab the data to send.
     }
 }
