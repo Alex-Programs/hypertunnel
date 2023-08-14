@@ -64,7 +64,11 @@ impl TransitSocket {
         }
     }
 
-    pub async fn get_data(&mut self, buffer_size: usize, modetime_ms: u32) -> Vec<DownStreamMessage> {
+    pub async fn get_data(
+        &mut self,
+        buffer_size: usize,
+        modetime_ms: u32,
+    ) -> Vec<DownStreamMessage> {
         // Continuously pull from tcp_data_return
         let mut start_time = std::time::Instant::now();
 
@@ -98,7 +102,8 @@ impl TransitSocket {
             }
 
             // Check if there is data to read
-            if let Ok(message) = self.tcp_data_return.recv().await { // TODO slightly worried about this locking up other requests to this function
+            if let Ok(message) = self.tcp_data_return.recv().await {
+                // TODO slightly worried about this locking up other requests to this function
                 // Add the data to the buffer
                 messages.push(message);
             } else {
@@ -212,6 +217,51 @@ struct TCPHandlerArguments {
     meta_return_data: Arc<DashMap<DeclarationToken, RwLock<ServerStreamInfo>>>,
     our_declaration_token: DeclarationToken,
 }
+/*
+async fn tcp_receive_subtask(stream: TcpStream, socket_id: SocketID, sender: broadcast::Sender<DownStreamMessage>) {
+    // Create a buffer to read into
+    let mut buffer: Vec<u8> = Vec::with_capacity(2048);
+    let mut seq_num = 0;
+    loop {
+        let bytes_read = match stream.read(&mut buffer).await {
+            Ok(bytes_read) => bytes_read,
+            Err(_) => {
+                eprintln!("Finish implementation of this");
+                continue;
+                // TODO: Old handling
+                /*
+                return_error(
+                    format!(
+                        "Could not read from server from TCP handler task to address {}:{}",
+                        arguments.address, arguments.port
+                    ),
+                    &arguments.meta_return_data,
+                    &arguments.our_declaration_token,
+                );
+                */
+            }
+        };
+
+        if bytes_read == 0 {
+            // The remote has closed the connection
+            // TODO handle this properly
+        }
+
+        let message = DownStreamMessage {
+            socket_id,
+            message_sequence_number: seq_num,
+            payload: buffer.clone(),
+            has_remote_closed: false
+        };
+
+        buffer.clear();
+
+        // Send the message to the request handler
+        sender.send(message).unwrap();
+
+        seq_num += 1;
+    }
+} */
 
 // Constructed for each SOCKS TCP connection. Takes in a receiver for receiving upstream messages from clients, and a sender for sending downstream messages to clients.
 // Remember: Incoming data may be out of order, so we need to check that it matches the sequence number.
@@ -233,7 +283,8 @@ async fn tcp_handler_task(mut arguments: TCPHandlerArguments) {
                     ),
                     &arguments.meta_return_data,
                     &arguments.our_declaration_token,
-                ).await;
+                )
+                .await;
                 return;
             }
         };
@@ -322,7 +373,7 @@ async fn tcp_handler_task(mut arguments: TCPHandlerArguments) {
 
         // Read buffer
         let mut buffer = vec![0; 2048]; // TODO variable buffer size
-        let bytes_read = match stream.read(&mut buffer).await {
+        let bytes_read = match stream.try_read(&mut buffer) {
             Ok(bytes_read) => bytes_read,
             Err(_) => {
                 return_error(
