@@ -6,4 +6,5 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-client-core = { path = "../client-core" }
+clientcore = { path = "../client-core" }
+tokio = { version = "1.30.0", features = ["full"] }

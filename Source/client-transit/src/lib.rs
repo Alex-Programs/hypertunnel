@@ -196,7 +196,7 @@ async fn push_handler(
 
         // Send the data
         let response = client
-            .post(&format!("{}/submit", target))
+            .post(&format!("{}/upload", target))
             .body(to_send.await.unwrap())
             .headers(headers.clone())
             .timeout(timeout_duration)
@@ -258,7 +258,7 @@ async fn pull_handler(
 
         // Send the data
         let response = client
-            .post(&format!("{}/submit", target))
+            .get(&format!("{}/download", target))
             .body(to_send)
             .headers(headers.clone())
             .timeout(timeout_duration)
@@ -267,6 +267,8 @@ async fn pull_handler(
 
         // Read the response
         let response = response.unwrap();
+
+        println!("Response status: {}", response.status());
 
         // Get the data
         let encrypted = response.bytes().await.unwrap();
