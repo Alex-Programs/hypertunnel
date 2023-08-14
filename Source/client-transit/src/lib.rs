@@ -8,6 +8,7 @@ use libtransit::{
 use rand::Rng;
 use reqwest::Client;
 use tokio::sync::mpsc::{self, Receiver, Sender};
+use tokio::sync::mpsc::error::TryRecvError;
 
 mod builder;
 pub use self::builder::TransitSocketBuilder;
@@ -167,17 +168,24 @@ async fn push_handler(
 
     let timeout_duration = Duration::from_secs(timeout_time as u64);
 
+    println!("Push handler started");
+
     loop {
         // Get the data to send
+        println!("Waiting for data");
         let to_send = to_send_passer.recv_async().await;
+        println!("Got data into upstream handler: {:?}", to_send);
 
         let to_send = match to_send {
             Ok(to_send) => to_send,
             Err(_) => {
                 // TODO handle this
+                to_send.unwrap();
                 continue;
             }
         };
+
+        println!("Sending data: {:?}", to_send);
 
         // Send the data
         // Encode and encrypt in a thread
@@ -194,14 +202,20 @@ async fn push_handler(
             encrypted
         });
 
+        println!("About to send to server");
+
         // Send the data
         let response = client
             .post(&format!("{}/upload", target))
             .body(to_send.await.unwrap())
             .headers(headers.clone())
-            .timeout(timeout_duration)
+            .timeout(std::time::Duration::from_secs(1))
             .send()
             .await;
+
+        let response = response.unwrap();
+
+        println!("Sent! Response code {:?}, data: {:?}", response.status(), response.bytes().await);
 
         // TODO if things go wrong, prevent the arrival of new data until the send works. See working nicely section of todo about reconstruction and error handling.
     }
@@ -362,41 +376,57 @@ pub async fn handle_transit(
 
     loop {
         // Get data to send up
-        let data = upstreamPasserRcv.recv().await;
-        let data = match data {
-            Some(data) => data,
-            None => {
-                // TODO handle this
-                continue;
+        let stream_data = upstreamPasserRcv.try_recv();
+        match stream_data {
+            Ok(upstream) => {
+                // Increment buffer size
+                current_buffer_size += upstream.payload.len();
+
+                println!("Gotten data to send up: {:?}", upstream);
+                
+                // Add it to the buffer
+                buffer_stream.push(upstream);
             }
-        };
-        // Increment buffer size
-        current_buffer_size += data.payload.len();
-        // Add it to the buffer
-        buffer_stream.push(data);
+            Err(error) => {
+                match error {
+                    TryRecvError::Empty => {}
+                    TryRecvError::Disconnected => {
+                        // TODO handle this
+                        panic!("Upstream passer disconnected");
+                    }
+                }
+            }
+        }
 
         // Now do it to the close socket messages
-        let close = closePasserRcv.recv().await;
-        let close = match close {
-            Some(close) => close,
-            None => {
-                // TODO handle this
-                continue;
+        let close_data = closePasserRcv.try_recv();
+        match close_data {
+            Ok(close) => {
+                // Increment buffer size
+                current_buffer_size += 2048; // Approxish I guess
+                                             // Add it to the buffer
+                buffer_close.push(close);
             }
-        };
-        // Increment buffer size
-        current_buffer_size += 2048; // Approxish I guess
-                                     // Add it to the buffer
-        buffer_close.push(close);
+            Err(error) => {
+                match error {
+                    TryRecvError::Empty => {}
+                    TryRecvError::Disconnected => {
+                        // TODO handle this
+                        panic!("Close socket passer disconnected");
+                    }
+                }
+            }
+        }
 
         // If we're above buff size
         if current_buffer_size > BUFF_SIZE {
+            println!("Sending data on due to buffer size");
             // Send the buffer to the push handler
             let multiple_messages = MultipleMessagesUpstream {
                 stream_messages: buffer_stream,
                 close_socket_messages: buffer_close,
             };
-            push_passer_send.send_async(multiple_messages).await;
+            push_passer_send.send_async(multiple_messages).await.unwrap();
             // Reset buffer
             buffer_stream = Vec::new();
             buffer_close = Vec::new();
@@ -406,15 +436,16 @@ pub async fn handle_transit(
 
         // If we're above mode time and there's more than one piece of data in the buffer
         if last_upstream_time.elapsed().as_millis() > MODETIME
-            && buffer_close.len() > 1
-            && buffer_stream.len() > 1
+            && (buffer_close.len() > 1
+            || buffer_stream.len() > 1)
         {
             // Send the buffer to the push handler
             let multiple_messages = MultipleMessagesUpstream {
                 stream_messages: buffer_stream,
                 close_socket_messages: buffer_close,
             };
-            push_passer_send.send_async(multiple_messages).await;
+            println!("Sending data on due to modetime");
+            push_passer_send.send_async(multiple_messages).await.unwrap();
             // Reset buffer
             buffer_close = Vec::new();
             buffer_stream = Vec::new();
@@ -426,8 +457,8 @@ pub async fn handle_transit(
 
         // If we're above mode time and this is the first piece of data, reset the last upstream time
         if last_upstream_time.elapsed().as_millis() > MODETIME
-            && buffer_close.len() == 1
-            && buffer_stream.len() == 1
+            && (buffer_close.len() > 1
+            || buffer_stream.len() > 1)
         {
             last_upstream_time = Instant::now();
         }

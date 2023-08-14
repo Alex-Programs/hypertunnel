@@ -4,6 +4,7 @@ use libtransit::{UpStreamMessage, CloseSocketMessage};
 use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{self, Receiver, Sender};
+use tokio::sync::mpsc::error::TryRecvError;
 use std::sync::atomic::{AtomicU32, Ordering};
 use tokio::task;
 use flume::{Sender as FlumeSender, Receiver as FlumeReceiver, self};
@@ -38,6 +39,7 @@ pub async fn begin_core_client(arguments: ClientArguments) {
         .with_target(arguments.target_host)
         .with_password(arguments.password)
         .with_client_name("Client-Core".to_string())
+        .with_timeout_time(5 * 60) // Temporary till streaming is in - TODO
         .build();
 
     let mut transit_socket = Arc::new(RwLock::new(transit_socket));
@@ -111,7 +113,7 @@ async fn tcp_listener(mut stream: TcpStream, upstreamPasserSend: Sender<UpStream
     let mut dstport: Option<libsocks::Port> = None;
 
     let rejection = libsocks::Socks4ConnectReply {
-        version: 4,
+        version: 0, // yes, this is correct
         status: libsocks::Socks4Status::Rejected,
         dstport: 0,
         dstip: 0,
@@ -157,7 +159,7 @@ async fn tcp_listener(mut stream: TcpStream, upstreamPasserSend: Sender<UpStream
 
     // If we've gotten to this point the data's good. Let's compose a reply
     let reply = libsocks::Socks4ConnectReply {
-        version: 4,
+        version: 0,
         status: libsocks::Socks4Status::Granted,
         dstport,
         dstip,
@@ -167,7 +169,7 @@ async fn tcp_listener(mut stream: TcpStream, upstreamPasserSend: Sender<UpStream
 
     match stream.try_write(&reply.to_binary()) {
         Ok(_) => {
-            println!("Sent reply to client");
+            println!("Said hello to client");
         },
         Err(error) => {
             println!("Failed to send reply to client: {:?}", error);
@@ -215,9 +217,19 @@ async fn tcp_listener(mut stream: TcpStream, upstreamPasserSend: Sender<UpStream
                     }
                 },
                 Err(error) => {
-                    // TODO handle properly
-                    eprintln!("Failed to receive data from transit: {:?}", error);
-                    continue
+                    match error {
+                        TryRecvError::Empty => {
+                            // No data from transit
+                            // Wait a moment because async
+                            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                            // DO NOT continue, we still need to read
+                        },
+                        _ => {
+                            // TODO handle properly
+                            eprintln!("Failed to receive data from transit: {:?}", error);
+                            continue
+                        }
+                    };
                 }
             };
         }
@@ -245,10 +257,15 @@ async fn tcp_listener(mut stream: TcpStream, upstreamPasserSend: Sender<UpStream
             if bytes_read == 0 {
                 // The socket was closed
                 // TODO handle properly
+                return
             }
+
+            println!("Read {} bytes from socket", bytes_read);
 
             // Send the data to transit
             upstreamPasserSend.send(upstream_packet).await.expect("Failed to send data to transit");
+
+            println!("Sent on to transit passer");
         }
     }
 }
