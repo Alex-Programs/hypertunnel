@@ -92,98 +92,6 @@ async fn index() -> impl Responder {
     HttpResponse::Ok().body("Hello world!")
 }
 
-#[post("/upload")]
-async fn upstream_data(
-    app_state: web::Data<AppState>,
-    req: HttpRequest,
-    body_bytes: Bytes,
-) -> impl Responder {
-    dprintln!("Received request to upload");
-
-    // Get token
-    let token = req.cookie("token");
-
-    let token = match token {
-        Some(token) => {
-            match parse_token(token.value().to_string()) {
-                Some(token) => token,
-                None => {
-                    // Return 404 - resist active probing by not telling the client what went wrong
-                    dprintln!("Token is invalid!");
-                    return HttpResponse::NotFound().body("No page exists");
-                }
-            }
-        }
-        None => {
-            // Return 404 - resist active probing by not telling the client what went wrong
-            dprintln!("No token (client identifier) supplied!");
-            return HttpResponse::NotFound().body("No page exists");
-        }
-    };
-
-    // Get transit socket
-    let session = app_state.sessions.get(&token);
-    if session.is_none() {
-        // Return 404 - resist active probing by not telling the client what went wrong
-        dprintln!("No session found for token!");
-        return HttpResponse::NotFound().body("No page exists");
-    }
-    let session = session.unwrap();
-
-    // Get body
-    let body = body_bytes;
-
-    // Decrypt body
-    let key = session.read().await.key;
-
-    let mut decrypted = match libsecrets::decrypt(&body, &key) {
-        Ok(decrypted) => decrypted, // If it succeeds, pull out content from Result<>
-        Err(_) => {
-            // Return 404 - resist active probing by not telling the client what went wrong
-            dprintln!("Failed to decrypt body!");
-            return HttpResponse::NotFound().body("No page exists");
-        }
-    };
-
-    // Parse into ClientMessageUpstream
-    let upstream: ClientMessageUpstream =
-        match libtransit::ClientMessageUpstream::decode_from_bytes(&mut decrypted) {
-            Ok(upstream) => upstream, // If it succeeds, pull out content from Result<>
-            Err(_) => {
-                // Return 404 - resist active probing by not telling the client what went wrong
-                dprintln!("Failed to parse decrypted body into ClientMessageUpstream");
-                return HttpResponse::NotFound().body("No page exists");
-            }
-        };
-
-    // Send on to transit socket
-    let downstream_messages = {
-        let mut session_unlocked = session.write().await;
-
-        // Now wait for return data. TODO replace the entire following section with a dynamic steganographic iterator that pretends to be an image/video/etc while pulling data...
-        // but that's for the obfuscation section. For now, just return data.
-        session_unlocked.get_data(4096, 50).await
-    };
-
-    // Get meta information
-    let meta = form_meta_response(&app_state).await;
-
-    // Form response
-    let response = ServerMessageDownstream {
-        messages: downstream_messages,
-        metadata: meta,
-    };
-
-    // Encode response
-    let response_bytes = response.encoded().unwrap(); // TODO handle error
-
-    // Encrypt response
-    let encrypted = libsecrets::encrypt(&response_bytes, &key).unwrap(); // TODO handle error
-
-    // Return response
-    HttpResponse::Ok().body(encrypted)
-}
-
 #[get("/download")]
 async fn downstream_data(
     app_state: web::Data<AppState>,
@@ -248,7 +156,109 @@ async fn downstream_data(
             }
         };
 
+    // Don't send on - just get
+    let downstream_messages = {
+        let mut session_unlocked = session.write().await;
+
+        // Now wait for return data. TODO replace the entire following section with a dynamic steganographic iterator that pretends to be an image/video/etc while pulling data...
+        // but that's for the obfuscation section. For now, just return data.
+        session_unlocked.get_data(4096, 50).await
+    };
+
+    // Get meta information
+    let meta = form_meta_response(&app_state).await;
+
+    // Form response
+    let response = ServerMessageDownstream {
+        messages: downstream_messages,
+        metadata: meta,
+    };
+
+    // Encode response
+    let response_bytes = response.encoded().unwrap(); // TODO handle error
+
+    // Encrypt response
+    let encrypted = libsecrets::encrypt(&response_bytes, &key).unwrap(); // TODO handle error
+
+    // Return response
+    HttpResponse::Ok().body(encrypted)
+}
+
+#[post("/upload")]
+async fn upstream_data(
+    app_state: web::Data<AppState>,
+    req: HttpRequest,
+    body_bytes: Bytes,
+) -> impl Responder {
+    dprintln!("Received request to upload");
+
+    // Get token
+    let token = req.cookie("token");
+
+    let token = match token {
+        Some(token) => {
+            match parse_token(token.value().to_string()) {
+                Some(token) => token,
+                None => {
+                    // Return 404 - resist active probing by not telling the client what went wrong
+                    dprintln!("Token is invalid!");
+                    return HttpResponse::NotFound().body("No page exists");
+                }
+            }
+        }
+        None => {
+            // Return 404 - resist active probing by not telling the client what went wrong
+            dprintln!("No token (client identifier) supplied!");
+            return HttpResponse::NotFound().body("No page exists");
+        }
+    };
+
+    // Get transit socket
+    let session = app_state.sessions.get(&token);
+    if session.is_none() {
+        // Return 404 - resist active probing by not telling the client what went wrong
+        dprintln!("No session found for token!");
+        return HttpResponse::NotFound().body("No page exists");
+    }
+
+    let session = session.unwrap();
+
+    dprintln!("Got transit socket");
+
+    // Get body
+    let body = body_bytes;
+
+    dprintln!("Got body");
+
+    // Decrypt body
+    let key = session.read().await.key;
+
+    dprintln!("Got key");
+
+    let mut decrypted = match libsecrets::decrypt(&body, &key) {
+        Ok(decrypted) => decrypted, // If it succeeds, pull out content from Result<>
+        Err(_) => {
+            // Return 404 - resist active probing by not telling the client what went wrong
+            dprintln!("Failed to decrypt body!");
+            return HttpResponse::NotFound().body("No page exists");
+        }
+    };
+
+    dprintln!("Decrypted data");
+
+    // Parse into ClientMessageUpstream
+    let upstream: ClientMessageUpstream =
+        match libtransit::ClientMessageUpstream::decode_from_bytes(&mut decrypted) {
+            Ok(upstream) => upstream, // If it succeeds, pull out content from Result<>
+            Err(_) => {
+                // Return 404 - resist active probing by not telling the client what went wrong
+                dprintln!("Failed to parse decrypted body into ClientMessageUpstream");
+                return HttpResponse::NotFound().body("No page exists");
+            }
+        };
+
     // Send on to transit socket
+    dprintln!("Sending on messages to transit socket...");
     {
         let mut session_unlocked = session.write().await;
 
@@ -257,9 +267,13 @@ async fn downstream_data(
             session_unlocked.process_upstream_message(message).await;
         }
 
+        dprintln!("Upstream messages sent on");
+
         for message in upstream.messages.close_socket_messages {
             session_unlocked.process_close_socket_message(message).await;
         }
+
+        dprintln!("Close socket messages sent on");
     }
 
     // Get meta information
