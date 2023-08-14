@@ -9,6 +9,7 @@ use tokio::sync::{broadcast, mpsc};
 
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
+use tokio::io::Interest;
 use tokio::net::TcpStream;
 use tokio::sync::RwLock;
 
@@ -290,124 +291,74 @@ async fn tcp_handler_task(mut arguments: TCPHandlerArguments) {
         };
 
     // Begin loop of transferring TCP data back and forth
-    let mut sequence_number = 0;
-    let mut last_sequence_number_sanity = 0;
     let mut return_sequence_number = 0;
-
-    let mut queue: Vec<SocksStreamInboundMessage> = Vec::with_capacity(16);
+    let mut last_seq_number_sanity = 0;
 
     loop {
-        // Sort the queue by sequence number
-        queue.sort_by(|a, b| {
-            let seq_num_a = get_seq_num(a);
-            let seq_num_b = get_seq_num(b);
+        let ready = stream.ready(Interest::READABLE | Interest::WRITABLE).await;
 
-            seq_num_a.cmp(&seq_num_b)
-        });
-
-        // Get data from the receiver OR the queue
-        // Check if the queue's latest message is the next one in sequence
-        let is_queue_next = if queue.len() > 0 {
-            match &queue[0] {
-                SocksStreamInboundMessage::UpStreamMessage(interior) => {
-                    interior.message_sequence_number == sequence_number
-                }
-                SocksStreamInboundMessage::CloseSocketMessage(interior) => {
-                    interior.message_sequence_number == sequence_number
-                }
-            }
-        } else {
-            false
-        };
-
-        // If the queue isn't next, get data from the receiver
-        let message = if is_queue_next {
-            // Pop the message off the queue
-            queue.remove(0)
-        } else {
-            // Get data from the receiver
-            let data = arguments.receiver.recv().await.unwrap();
-
-            // Check if the message is the next one in sequence
-            let sequence_number = match &data {
-                SocksStreamInboundMessage::UpStreamMessage(interior) => {
-                    interior.message_sequence_number
-                }
-                SocksStreamInboundMessage::CloseSocketMessage(interior) => {
-                    interior.message_sequence_number
-                }
-            };
-
-            if sequence_number == sequence_number {
-                // If it is, return it
-                data
-            } else {
-                // If it isn't, put it in the queue
-                queue.push(data);
-
-                // And loop - hopefully we'll get it later!
-                continue;
-            }
-        };
-
-        // Now we have the latest message!
-        // Sanity check
-        debug_assert!(get_seq_num(&message) == last_sequence_number_sanity + 1);
-
-        // Now actually process it
-        match message {
-            SocksStreamInboundMessage::UpStreamMessage(message) => {
-                // Send the data to the server
-                stream.write_all(&message.payload).await.unwrap();
-            }
-            SocksStreamInboundMessage::CloseSocketMessage(_) => {
-                // Close the socket
-                stream.shutdown().await.unwrap();
-
-                // TODO remove the socket from the map
-
-                // Break out of the loop
-                break;
-            }
+        if ready.is_err() {
+            eprintln!("Ready error: {}", ready.err().unwrap());
+            // TODO handle properly
+            return;
         }
 
-        // Read buffer
-        let mut buffer = vec![0; 2048]; // TODO variable buffer size
-        let bytes_read = match stream.try_read(&mut buffer) {
-            Ok(bytes_read) => bytes_read,
-            Err(_) => {
-                return_error(
-                    format!(
-                        "Could not read from server from TCP handler task to address {}:{}",
-                        arguments.address, arguments.port
-                    ),
-                    &arguments.meta_return_data,
-                    &arguments.our_declaration_token,
-                );
+        let ready = ready.unwrap();
+
+        if ready.is_readable() {
+            let mut downstream_msg = DownStreamMessage {
+                socket_id: arguments.socket_id,
+                message_sequence_number: return_sequence_number,
+                payload: Vec::with_capacity(0), // So it doesn't do a small allocation only to do a huge one later
+                has_remote_closed: false,
+            };
+
+            // Write in directly for efficiency
+            let bytes_read = match stream.try_read(&mut downstream_msg.payload) {
+                Ok(bytes_read) => bytes_read,
+                Err(_) => {
+                    // TODO handle this properly
+                    return_error(
+                        format!(
+                            "Could not read from server from TCP handler task to address {}:{}",
+                            arguments.address, arguments.port
+                        ),
+                        &arguments.meta_return_data,
+                        &arguments.our_declaration_token,
+                    )
+                    .await;
+                    return;
+                }
+            };
+            if bytes_read == 0 {
+                // The remote has closed the connection
+                // TODO handle this properly
                 return;
             }
-        };
 
-        // Sometimes less is sent than requested, so truncate the buffer. In the future we'll have a way to tune the max buffer size.
-        buffer.truncate(bytes_read);
+            // Send on the message
+            arguments.sender.send(downstream_msg).unwrap();
 
-        // Create a downstream message
-        let message = DownStreamMessage {
-            socket_id: arguments.socket_id,
-            message_sequence_number: return_sequence_number,
-            payload: buffer,
-            has_remote_closed: false,
-        };
+            return_sequence_number += 1;
+        }
 
-        // Send the message to the client
-        arguments.sender.send(message).unwrap();
+        if ready.is_writable() {
+            let message = arguments.receiver.recv().await.unwrap();
+            
+            let seq_num = get_seq_num(&message);
+            debug_assert_eq!(seq_num, last_seq_number_sanity + 1);
 
-        // Increment the return sequence number
-        return_sequence_number += 1;
-
-        // Increment the sequence number
-        last_sequence_number_sanity = sequence_number;
-        sequence_number += 1;
+            match message {
+                SocksStreamInboundMessage::UpStreamMessage(message) => {
+                    stream.write_all(&message.payload).await.unwrap();
+                    last_seq_number_sanity = seq_num;
+                }
+                SocksStreamInboundMessage::CloseSocketMessage(message) => {
+                    // TODO handle - but ensure all data is read first
+                    println!("TODO close now");
+                }
+            }
+        }
     }
 }
 

@@ -48,6 +48,7 @@ impl From<libsecrets::EncryptionError> for TransitInitError {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct DownstreamBackpasser {
     pub socket_id: libtransit::SocketID,
     pub sender: Sender<DownStreamMessage>,
@@ -86,7 +87,12 @@ async fn greet_server(transit_socket: Arc<RwLock<TransitSocket>>) -> Result<(), 
 
     let (target, headers, key, timeout_time) = {
         let transit_socket = transit_socket.read().await;
-        (transit_socket.target.clone(), transit_socket.headers.clone(), transit_socket.key.clone(), transit_socket.timeout_time)
+        (
+            transit_socket.target.clone(),
+            transit_socket.headers.clone(),
+            transit_socket.key.clone(),
+            transit_socket.timeout_time,
+        )
     };
 
     let response = Client::new()
@@ -142,7 +148,10 @@ async fn greet_server(transit_socket: Arc<RwLock<TransitSocket>>) -> Result<(), 
     Ok(())
 }
 
-async fn push_handler(transit_socket: Arc<RwLock<TransitSocket>>, to_send_passer: FlumeReceiver<MultipleMessagesUpstream>) {
+async fn push_handler(
+    transit_socket: Arc<RwLock<TransitSocket>>,
+    to_send_passer: FlumeReceiver<MultipleMessagesUpstream>,
+) {
     // Create client
     let client = Client::new();
 
@@ -203,13 +212,13 @@ fn get_metadata() -> ClientMetaUpstream {
         bytes_to_send_to_remote: 0,
         bytes_to_reply_to_client: 0,
         messages_to_send_to_remote: 0,
-        messages_to_reply_to_client: 0
-    }    
+        messages_to_reply_to_client: 0,
+    }
 }
 
 async fn pull_handler(
     transit_socket: Arc<RwLock<TransitSocket>>,
-    messagePasserPasser: BroadcastReceiver<DownstreamBackpasser>,
+    mut messagePasserPasser: BroadcastReceiver<DownstreamBackpasser>,
 ) {
     // This will hold the return lookup and be populated by the messagePasserPassers
     let mut return_lookup: HashMap<SocketID, Sender<DownStreamMessage>> = HashMap::new();
@@ -233,7 +242,10 @@ async fn pull_handler(
         // Could be made spawn_blocking if this turns out to take too long
         let to_send = {
             let upstream_message = ClientMessageUpstream {
-                messages: MultipleMessagesUpstream { stream_messages: Vec::with_capacity(0), close_socket_messages: Vec::with_capacity(0) },
+                messages: MultipleMessagesUpstream {
+                    stream_messages: Vec::with_capacity(0),
+                    close_socket_messages: Vec::with_capacity(0),
+                },
                 metadata: get_metadata(),
             };
 
@@ -285,7 +297,8 @@ async fn pull_handler(
                 }
                 None => {
                     // Populate the sender via iteration through the messagePasserPasser
-                    for messagePasser in messagePasserPasser.try_iter() {
+                    for _ in 0..messagePasserPasser.len() {
+                        let messagePasser = messagePasserPasser.recv().await.unwrap();
                         // Blindly populate
                         return_lookup.insert(messagePasser.socket_id, messagePasser.sender);
                     }
@@ -295,6 +308,7 @@ async fn pull_handler(
 
                     // Send the message
                     sender.send(downstream_message).await.unwrap();
+                }
             }
         }
     }
@@ -315,11 +329,17 @@ pub async fn handle_transit(
 
     let (push_client_count, pull_client_count) = {
         let transit_socket = transit_socket.read().await;
-        (transit_socket.push_client_count, transit_socket.pull_client_count)
+        (
+            transit_socket.push_client_count,
+            transit_socket.pull_client_count,
+        )
     };
 
     for _ in 0..push_client_count {
-        task::spawn(push_handler(transit_socket.clone(), push_passer_receive.clone()));
+        task::spawn(push_handler(
+            transit_socket.clone(),
+            push_passer_receive.clone(),
+        ));
     }
 
     // Create the pull handlers
@@ -364,7 +384,7 @@ pub async fn handle_transit(
         };
         // Increment buffer size
         current_buffer_size += 2048; // Approxish I guess
-        // Add it to the buffer
+                                     // Add it to the buffer
         buffer_close.push(close);
 
         // If we're above buff size
@@ -383,7 +403,10 @@ pub async fn handle_transit(
         }
 
         // If we're above mode time and there's more than one piece of data in the buffer
-        if last_upstream_time.elapsed().as_millis() > MODETIME && buffer_close.len() > 1 && buffer_stream.len() > 1 {
+        if last_upstream_time.elapsed().as_millis() > MODETIME
+            && buffer_close.len() > 1
+            && buffer_stream.len() > 1
+        {
             // Send the buffer to the push handler
             let multiple_messages = MultipleMessagesUpstream {
                 stream_messages: buffer_stream,
@@ -400,7 +423,10 @@ pub async fn handle_transit(
         }
 
         // If we're above mode time and this is the first piece of data, reset the last upstream time
-        if last_upstream_time.elapsed().as_millis() > MODETIME && buffer_close.len() == 1 && buffer_stream.len() == 1 {
+        if last_upstream_time.elapsed().as_millis() > MODETIME
+            && buffer_close.len() == 1
+            && buffer_stream.len() == 1
+        {
             last_upstream_time = Instant::now();
         }
     }

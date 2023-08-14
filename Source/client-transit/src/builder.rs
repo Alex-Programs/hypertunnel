@@ -116,8 +116,6 @@ impl TransitSocketBuilder {
             None => 10,
         };
 
-        let control_client = Client::new();
-
         let server_meta = ServerMetaDownstream {
             bytes_to_reply_to_client: 0,
             bytes_to_send_to_remote: 0,
@@ -140,7 +138,6 @@ impl TransitSocketBuilder {
         TransitSocket {
             target,
             key,
-            control_client,
             server_meta,
             client_identifier,
             push_client_count,
@@ -149,7 +146,6 @@ impl TransitSocketBuilder {
             headers,
             is_initialized: false,
             client_name,
-            tcp_return_passers: HashMap::new(),
         }
     }
 }
