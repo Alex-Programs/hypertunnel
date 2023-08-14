@@ -11,15 +11,15 @@ use std::sync::Arc;
 use tokio::io::Interest;
 use tokio::sync::RwLock;
 
-struct ClientArguments {
-    listen_address: String,
-    listen_port: u16,
-    target_host: String,
-    password: String,
+pub struct ClientArguments {
+    pub listen_address: String,
+    pub listen_port: u16,
+    pub target_host: String,
+    pub password: String,
 }
 
 // Core of the client program for now. See Obsidian
-async fn begin_core_client(arguments: ClientArguments) {
+pub async fn begin_core_client(arguments: ClientArguments) {
     let (upstreamPasserSend, upstreamPasserReceive): (
         Sender<UpStreamMessage>,
         Receiver<UpStreamMessage>,
