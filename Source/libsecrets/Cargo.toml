@@ -28,3 +28,7 @@ harness = false
 [[bench]]
 name = "allocate_benchmark"
 harness = false
+
+[[bench]]
+name = "robs_benchmark"
+harness = false
