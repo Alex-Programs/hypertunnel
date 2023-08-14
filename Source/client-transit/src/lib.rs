@@ -209,7 +209,7 @@ async fn push_handler(
             .post(&format!("{}/upload", target))
             .body(to_send.await.unwrap())
             .headers(headers.clone())
-            .timeout(std::time::Duration::from_secs(1))
+            .timeout(std::time::Duration::from_secs(1)) // TODO RM
             .send()
             .await;
 
