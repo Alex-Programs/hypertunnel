@@ -5,6 +5,8 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use std::sync::atomic::{AtomicU32, Ordering};
 use tokio::task;
+use flume::{Sender as FlumeSender, Receiver as FlumeReceiver, self};
+use tokio::sync::broadcast;
 
 struct ClientArguments {
     listen_address: String,
@@ -18,12 +20,10 @@ async fn begin_core_client(arguments: ClientArguments) {
     let (upstreamPasserSend, upstreamPasserReceive): (
         Sender<UpStreamMessage>,
         Receiver<UpStreamMessage>,
-    ) = mpsc::channel(100);
+    ) = mpsc::channel(10_000);
 
-    let (messagePasserPasserSend, messagePasserPasserReceive): (
-        Sender<client_transit::DownstreamBackpasser>,
-        Receiver<client_transit::DownstreamBackpasser>,
-    ) = mpsc::channel(100_00);
+    let (messagePasserPasserSend, mut messagePasserPasserReceive) = broadcast::channel<client_transit::DownstreamBackpasser>(100_000);
+    let messagePasserPasserSend = Arc::new(messagePasserPasserSend);
 
     // Cannot transfer threads
     let mut transit_socket = client_transit::TransitSocketBuilder::new()
@@ -50,6 +50,9 @@ async fn begin_core_client(arguments: ClientArguments) {
 
         loop {
             let (socket, _) = listener.accept().await.expect("Failed to accept connection");
+
+            // Spawn a task to handle the connection
+            task::spawn(tcp_listener(socket, upstreamPasserSend.clone(), messagePasserPasserSend.clone()));
         }
     });
 
@@ -58,7 +61,7 @@ async fn begin_core_client(arguments: ClientArguments) {
         .await;
 }
 
-async fn tcp_listener(stream: TcpStream, upstreamPasserSend: Sender<UpStreamMessage>, messagePasserPasserSend: Sender<client_transit::DownstreamBackpasser>) {
+async fn tcp_listener(stream: TcpStream, upstreamPasserSend: Sender<UpStreamMessage>, messagePasserPasserSend: Arc<Sender<client_transit::DownstreamBackpasser>>) {
     // Read the first packet
     // Wait for the socket to be readable
     let mut buf = Vec::with_capacity(4096);
