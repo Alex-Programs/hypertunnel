@@ -15,23 +15,20 @@ use debug_print::{
 use dashmap::DashMap;
 
 mod config;
-mod transit_socket;
-use transit_socket::TransitSocket;
+mod new_transit;
+use new_transit::SessionActorsStorage;
 
 use libtransit::{
     ClientMessageUpstream, DeclarationToken, MultipleMessagesUpstream, ServerMessageDownstream,
-    ServerMetaDownstream, ServerStreamInfo,
+    ServerMetaDownstream, ServerStreamInfo, SocketID,
 };
 
 // State passed to all request handlers
 struct AppState {
     config: config::Config,                                     // Configuration
-    sessions: DashMap<DeclarationToken, RwLock<TransitSocket>>, // Currently-in-use sessions with the
-    //                                             client identifier as the key
     users: Vec<User>, // Users from the configuration with the passwords preprocessed into keys
-    //                   for faster initial handshake when there are many users
-    meta_return_data: Arc<DashMap<DeclarationToken, RwLock<ServerStreamInfo>>>,
-    current_sessions: Vec<DeclarationToken>,
+    //                   for faster initial handshake when there are many users,
+    actor_lookup: DashMap<DeclarationToken, SessionActorsStorage>, // Lookup table for actors
 }
 
 // Simple user definition
@@ -42,16 +39,6 @@ struct User {
 }
 
 async fn form_meta_response(app_state: &web::Data<AppState>) -> ServerMetaDownstream {
-    let mut streams = Vec::new();
-    for session in &app_state.current_sessions {
-        let stream = app_state.meta_return_data.get(session);
-        let stream = match stream {
-            Some(stream) => stream,
-            None => continue,
-        };
-        streams.push(stream.read().await.clone());
-    }
-
     ServerMetaDownstream {
         bytes_to_reply_to_client: 0,    // TODO
         bytes_to_send_to_remote: 0,     // TODO
@@ -60,7 +47,7 @@ async fn form_meta_response(app_state: &web::Data<AppState>) -> ServerMetaDownst
         cpu_usage: 0.0,                 // TODO
         memory_usage_kb: 0,             // TODO
         num_open_sockets: 0,            // TODO
-        streams: streams,
+        streams: vec![],
     }
 }
 

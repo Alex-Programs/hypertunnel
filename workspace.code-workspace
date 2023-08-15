@@ -26,6 +26,9 @@
 		},
 		{
 			"path": "Source/integration-tests"
+		},
+		{
+			"path": "Source/server"
 		}
 	],
 	"settings": {}

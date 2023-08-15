@@ -8,6 +8,7 @@ members = [
     "libsocks",
     "libtransit",
     "server-monolith",
+    "server",
     "libsecrets",
     "integration-tests"
 ]

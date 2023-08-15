@@ -1833,6 +1833,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "server"
+version = "0.1.0"
+dependencies = [
+ "actix-web",
+ "debug_print",
+ "hex",
+ "libsecrets",
+ "libtransit",
+ "once_cell",
+ "rand",
+ "serde",
+ "tokio",
+ "toml 0.7.6",
+]
+
+[[package]]
 name = "server-monolith"
 version = "0.1.0"
 dependencies = [
