@@ -29,6 +29,7 @@ pub struct TransitSocket {
     tcp_data_assign: broadcast::Sender<DownStreamMessage>,
     meta_return_data: Arc<DashMap<DeclarationToken, RwLock<ServerStreamInfo>>>,
     our_declaration_token: DeclarationToken,
+    awaiting_downstreams: Vec<mpsc::Sender<Vec<DownStreamMessage>>>
 }
 
 impl TransitSocket {
@@ -62,56 +63,17 @@ impl TransitSocket {
             tcp_data_assign,
             meta_return_data,
             our_declaration_token,
+            awaiting_downstreams: vec![]
         }
     }
 
-    pub async fn get_data(
-        &mut self,
-        buffer_size: usize,
-        modetime_ms: u32,
-    ) -> Vec<DownStreamMessage> {
-        // Continuously pull from tcp_data_return
-        let mut start_time = std::time::Instant::now();
+    pub fn register_get_data_listener(&mut self) -> mpsc::Receiver<Vec<DownStreamMessage>> {
+        let (send, recv) = mpsc::channel(1);
 
-        /* Description from notes:
-        Each TCP stream task is given a reference to the return-data message passer.
-        They can feed data in to that. Returning can call `get_data(buffsize, modetime)` on the transit socket.
-        That function pulls from the data message passer. If the buffer size is filled, it returns.
-        After `modetime` has elapsed it will return data regardless of if it's filled the `buffsize`.
-        If data appears *after* `modetime` where the buffer was *not filled at all* before `modetime` it will wait for the buffer to be filled *or* `modetime` to elapse again.
-        */
+        // Add the sender to the downstream waiters
+        self.awaiting_downstreams.push(send);
 
-        let mut messages = vec![];
-
-        loop {
-            // Check if the buffer is filled
-            if messages.len() >= buffer_size {
-                return messages;
-            }
-
-            // Check if the modetime has elapsed
-            if start_time.elapsed().as_millis() >= modetime_ms as u128 {
-                // Is there any data?
-                if messages.len() > 0 {
-                    // If there is data, return it
-                    return messages;
-                } else {
-                    // If there is no data, wait for a bit and reset the timer
-                    start_time = std::time::Instant::now();
-                    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
-                }
-            }
-
-            // Check if there is data to read
-            if let Ok(message) = self.tcp_data_return.recv().await {
-                // TODO slightly worried about this locking up other requests to this function
-                // Add the data to the buffer
-                messages.push(message);
-            } else {
-                // If there is no data to read, wait for a bit
-                tokio::time::sleep(std::time::Duration::from_millis(2)).await;
-            }
-        }
+        recv
     }
 
     pub async fn process_close_socket_message(&mut self, message: CloseSocketMessage) {
@@ -218,51 +180,6 @@ struct TCPHandlerArguments {
     meta_return_data: Arc<DashMap<DeclarationToken, RwLock<ServerStreamInfo>>>,
     our_declaration_token: DeclarationToken,
 }
-/*
-async fn tcp_receive_subtask(stream: TcpStream, socket_id: SocketID, sender: broadcast::Sender<DownStreamMessage>) {
-    // Create a buffer to read into
-    let mut buffer: Vec<u8> = Vec::with_capacity(2048);
-    let mut seq_num = 0;
-    loop {
-        let bytes_read = match stream.read(&mut buffer).await {
-            Ok(bytes_read) => bytes_read,
-            Err(_) => {
-                eprintln!("Finish implementation of this");
-                continue;
-                // TODO: Old handling
-                /*
-                return_error(
-                    format!(
-                        "Could not read from server from TCP handler task to address {}:{}",
-                        arguments.address, arguments.port
-                    ),
-                    &arguments.meta_return_data,
-                    &arguments.our_declaration_token,
-                );
-                */
-            }
-        };
-
-        if bytes_read == 0 {
-            // The remote has closed the connection
-            // TODO handle this properly
-        }
-
-        let message = DownStreamMessage {
-            socket_id,
-            message_sequence_number: seq_num,
-            payload: buffer.clone(),
-            has_remote_closed: false
-        };
-
-        buffer.clear();
-
-        // Send the message to the request handler
-        sender.send(message).unwrap();
-
-        seq_num += 1;
-    }
-} */
 
 // Constructed for each SOCKS TCP connection. Takes in a receiver for receiving upstream messages from clients, and a sender for sending downstream messages to clients.
 // Remember: Incoming data may be out of order, so we need to check that it matches the sequence number.
