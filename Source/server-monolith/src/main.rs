@@ -19,7 +19,7 @@ mod new_transit;
 use new_transit::SessionActorsStorage;
 
 use libtransit::{
-    ClientMessageUpstream, DeclarationToken, MultipleMessagesUpstream, ServerMessageDownstream,
+    ClientMessageUpstream, DeclarationToken, ServerMessageDownstream,
     ServerMetaDownstream, ServerStreamInfo, SocketID,
 };
 
@@ -108,20 +108,20 @@ async fn downstream_data(
         }
     };
 
-    // Get transit socket
-    let session = app_state.sessions.get(&token);
-    if session.is_none() {
+    // Get actor
+    let actor = app_state.actor_lookup.get(&token);
+    if actor.is_none() {
         // Return 404 - resist active probing by not telling the client what went wrong
         dprintln!("No session found for token!");
         return HttpResponse::NotFound().body("No page exists");
     }
-    let session = session.unwrap();
+    let actor = actor.unwrap();
 
     // Get body
     let body = body_bytes;
 
     // Decrypt body
-    let key = session.read().await.key;
+    let key = actor.key;
 
     let mut decrypted = match libsecrets::decrypt(&body, &key) {
         Ok(decrypted) => decrypted, // If it succeeds, pull out content from Result<>
@@ -145,11 +145,16 @@ async fn downstream_data(
 
     // Don't send on - just get
     let downstream_messages = {
-        let mut session_unlocked = session.write().await;
+        let return_messages = actor.from_bundler_stream.recv_async().await;
 
-        // Now wait for return data. TODO replace the entire following section with a dynamic steganographic iterator that pretends to be an image/video/etc while pulling data...
-        // but that's for the obfuscation section. For now, just return data.
-        session_unlocked.get_data(4096, 50).await
+        match return_messages {
+            Ok(return_messages) => return_messages,
+            Err(_) => {
+                // Return 404 - resist active probing by not telling the client what went wrong
+                dprintln!("Failed to receive messages from actor!");
+                return HttpResponse::NotFound().body("No page exists");
+            }
+        }
     };
 
     // Get meta information
@@ -200,17 +205,17 @@ async fn upstream_data(
         }
     };
 
-    // Get transit socket
-    let session = app_state.sessions.get(&token);
-    if session.is_none() {
+    // Get actor
+    let actor = app_state.actor_lookup.get(&token);
+    if actor.is_none() {
         // Return 404 - resist active probing by not telling the client what went wrong
         dprintln!("No session found for token!");
         return HttpResponse::NotFound().body("No page exists");
     }
 
-    let session = session.unwrap();
+    let actor = actor.unwrap();
 
-    dprintln!("Got transit socket");
+    dprintln!("Got actor");
 
     // Get body
     let body = body_bytes;
@@ -218,7 +223,7 @@ async fn upstream_data(
     dprintln!("Got body");
 
     // Decrypt body
-    let key = session.read().await.key;
+    let key = actor.key;
 
     dprintln!("Got key");
 
@@ -244,23 +249,19 @@ async fn upstream_data(
             }
         };
 
-    // Send on to transit socket
-    dprintln!("Sending on messages to transit socket...");
+    // Send on to actor
+    dprintln!("Sending on messages to actor...");
     {
-        let mut session_unlocked = session.write().await;
+        let to_bundler = &actor.to_bundler_stream;
 
         // Send messages on
         for message in upstream.messages.stream_messages {
-            session_unlocked.process_upstream_message(message).await;
+            to_bundler.send(message).unwrap();
         }
 
-        dprintln!("Upstream messages sent on");
+        dprintln!("Sent on messages to actor");
 
-        for message in upstream.messages.close_socket_messages {
-            session_unlocked.process_close_socket_message(message).await;
-        }
-
-        dprintln!("Close socket messages sent on");
+        dprintln!("Did not send on close socket msgs");
     }
 
     // Get meta information
@@ -372,10 +373,10 @@ async fn client_greeting(
 
     dprintln!("Formed response: {:?}", encrypted);
 
-    // Add it to the sessions
-    let socket = TransitSocket::new(key, app_state.meta_return_data.clone(), token.clone());
-
-    app_state.sessions.insert(token, RwLock::new(socket));
+    // Create actor
+    let actor_storage = new_transit::create_actor(&key).await;
+    // Add to sessions
+    app_state.actor_lookup.insert(token, actor_storage);
 
     dprintln!("Added session to sessions; returning response");
 
@@ -427,15 +428,10 @@ async fn main() -> std::io::Result<()> {
         println!("Hashed key for user '{}'", user.name);
     }
 
-    // Create appstate that will be provided to requests
-    let meta_return_data = Arc::new(DashMap::new());
-
     let appstate = web::Data::new(AppState {
         config: configuration.clone(),
-        sessions: DashMap::new(),
         users,
-        current_sessions: Vec::new(),
-        meta_return_data,
+        actor_lookup: DashMap::new()
     });
 
     println!(
