@@ -191,8 +191,7 @@ async fn tcp_listener(stream: TcpStream, upstreamPasserSend: Sender<UpStreamMess
 
                     match stream.try_write(&bytes) {
                         Ok(_) => {
-                            // Transit has sent us data
-                            send_seq_num += 1;
+                            // All is fine
                         },
                         Err(error) => {
                             // TODO handle properly
@@ -251,6 +250,8 @@ async fn tcp_listener(stream: TcpStream, upstreamPasserSend: Sender<UpStreamMess
             upstreamPasserSend.send(upstream_packet).await.expect("Failed to send data to transit");
 
             println!("Sent on to transit passer");
+
+            send_seq_num += 1;
         }
     }
 }

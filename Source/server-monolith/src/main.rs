@@ -157,6 +157,8 @@ async fn downstream_data(
         }
     };
 
+    dprintln!("Returning data: {:?}", downstream_messages);
+
     // Get meta information
     let meta = form_meta_response(&app_state).await;
 

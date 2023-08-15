@@ -12,6 +12,11 @@ use tokio::net::TcpStream;
 
 use libsecrets::EncryptionKey;
 
+use debug_print::{
+    debug_eprint as deprint, debug_eprintln as deprintln, debug_print as dprint,
+    debug_println as dprintln,
+};
+
 pub struct SessionActorsStorage {
     pub to_bundler_stream: mpsc::UnboundedSender<UpStreamMessage>,
     pub from_bundler_stream: flume::Receiver<Vec<DownStreamMessage>>,
@@ -55,30 +60,32 @@ pub async fn handle_session(
     let mut buffer: Vec<DownStreamMessage> = Vec::with_capacity(1024);
 
     loop {
+        dprintln!("Loop");
         let mut no_received_http = true;
         let mut no_received_tcp = false;
 
         // TCP to HTTP messages
         for managed_socket in &managed_sockets {
+            dprintln!("Managing socket {}", managed_socket);
             // Get the TCP handler
             stream_from_tcp_handlers
                 .entry(*managed_socket)
                 .and_modify(|tcp_handler| {
                     // Try to receive from the TCP handler
+                    dprintln!("Attempting to read from TCP handler");
                     match tcp_handler.try_recv() {
                         Ok(message) => {
                             // Add to the buffer
                             buffer_size += message.payload.len();
                             buffer.push(message);
-                            no_received_tcp = false;
+                            no_received_http = false;
                         }
                         Err(e) => {
-                            // Check if the channel is empty
-                            if e == mpsc::error::TryRecvError::Empty {
+                            if e == tokio::sync::mpsc::error::TryRecvError::Empty {
                                 return;
-                            } else {
-                                // Panic
-                                panic!("Error receiving from TCP handler: {:?}", e);
+                            } else if e == tokio::sync::mpsc::error::TryRecvError::Disconnected {
+                                dprintln!("TCP handler closed");
+                                // TODO handle this - remove from managed sockets etc
                             }
                         }
                     }
@@ -88,6 +95,7 @@ pub async fn handle_session(
         // Check if we should return the buffer
         if buffer_size > 128 * 1024 {
             // Send the buffer
+            dprintln!("Sending buffer back due to size!");
             to_http_stream.send(buffer.clone()).unwrap();
 
             // Reset the buffer
@@ -97,27 +105,31 @@ pub async fn handle_session(
             // Update the last return time
             last_return_time = Instant::now();
         }
+
+        dprintln!("Buffer size: {}  Time elapsed: {}", buffer_size, last_return_time.elapsed().as_millis());
 
         // Check if it exceeds modetime, but there's nothing in the buffer
-        if last_return_time.elapsed() > Duration::from_millis(50) && buffer_size == 0 {
-            // Update the last return time
-            last_return_time = Instant::now();
-        }
-
-        // Check if last_return_time exceeds modetime
         if last_return_time.elapsed() > Duration::from_millis(50) {
-            // Send the buffer
-            to_http_stream.send(buffer.clone()).unwrap();
+            if buffer_size > 0 {
+                dprintln!("Sending buffer back due to modetime!");
 
-            // Reset the buffer
-            buffer.clear();
-            buffer_size = 0;
+                // Send the buffer
+                to_http_stream.send(buffer.clone()).unwrap();
 
-            // Update the last return time
-            last_return_time = Instant::now();
+                // Reset the buffer
+                buffer.clear();
+                buffer_size = 0;
+
+                // Update the last return time
+                last_return_time = Instant::now();
+            } else {
+                // Update the last return time
+                last_return_time = Instant::now();
+            }
         }
 
         // HTTP to TCP messages
+        dprintln!("Attempting to read from HTTP stream");
         match from_http_stream.try_recv() {
             Ok(message) => {
                 // Get the socket ID
@@ -151,12 +163,13 @@ pub async fn handle_session(
                 };
 
                 // Send the message to the TCP handler
+                dprintln!("Sending message sequence number {} to TCP handler (socket ID {})", message.message_sequence_number, message.socket_id);
                 tcp_handler.send(message).unwrap();
             }
             Err(e) => {
                 // Check if the channel is empty
                 if e == mpsc::error::TryRecvError::Empty {
-                    no_received_http = true;
+                    no_received_tcp = true;
                 } else {
                     // Panic
                     panic!("Error receiving from HTTP stream: {:?}", e);
@@ -166,7 +179,9 @@ pub async fn handle_session(
 
         if no_received_http && no_received_tcp {
             // Sleep for 1ms
+            dprintln!("Sleeping for 1ms");
             tokio::time::sleep(Duration::from_millis(1)).await;
+            dprintln!("Slept");
         }
     }
 }
@@ -213,7 +228,15 @@ pub async fn handle_tcp(
                 Ok(bytes_read) => bytes_read,
                 Err(e) => {
                     // TODO handle this better
-                    panic!("Error reading from TCP stream: {:?}", e);
+                    // Check if it's because it's blocking
+                    if e.kind() == std::io::ErrorKind::WouldBlock {
+                        // Wait a moment
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+
+                        continue;
+                    } else {
+                        panic!("Error reading from TCP stream: {:?}", e);
+                    }
                 }
             };
 
@@ -223,6 +246,7 @@ pub async fn handle_tcp(
             }
 
             // Send the message
+            dprintln!("Sending message sequence number {} to HTTP stream (socket ID {})", downstream_msg.message_sequence_number, downstream_msg.socket_id);
             to_http_stream.send(downstream_msg).unwrap();
 
             // Increment the return sequence number
@@ -230,11 +254,15 @@ pub async fn handle_tcp(
         }
 
         if ready.is_writable() {
+            dprintln!("About to try to write to the stream");
             let message = match from_http_stream.try_recv() {
                 Ok(message) => message,
                 Err(e) => {
                     // Check if the channel is empty
                     if e == mpsc::error::TryRecvError::Empty {
+                        // Wait a moment
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+
                         continue;
                     } else {
                         // Panic
@@ -242,6 +270,7 @@ pub async fn handle_tcp(
                     }
                 }
             };
+            dprintln!("Written to the stream");
 
             let seq_num = message.message_sequence_number;
 
