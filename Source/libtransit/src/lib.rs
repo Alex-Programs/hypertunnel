@@ -195,15 +195,48 @@ fn test_multiple_messages_upstream() {
 // ================================================= //
 
 #[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
-pub struct ServerMetaDownstream {
-    pub bytes_to_reply_to_client: usize,
-    pub bytes_to_send_to_remote: usize,
-    pub messages_to_reply_to_client: usize,
-    pub messages_to_send_to_remote: usize,
+pub struct ServerMetaDownstreamTrafficStats {
+    pub http_up_to_coordinator_bytes: u32,
+    pub coordinator_up_to_socket_bytes: u32,
+    pub socket_down_to_coordinator_bytes: u32,
+    pub coordinator_down_to_http_message_passer_bytes: u32,
+    pub coordinator_down_to_http_buffer_bytes: u32,
+    pub congestion_ctrl_intake_throttle: u32,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
+pub struct ServerMetaDownstreamServerStats {
     pub cpu_usage: f32,
-    pub memory_usage_kb: usize,
-    pub num_open_sockets: usize,
-    pub streams: Vec<ServerStreamInfo>,
+    pub memory_usage_kb: u32,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
+pub struct ServerMetaDownstreamPacketInfo {
+    pub unix_ms: u64, // As u32 it would only last 49 days
+    pub seq_num: u32,
+}
+
+#[repr(u8)]
+#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
+pub enum ServerMetaDownstreamLogSeverity {
+    Info,
+    Warning,
+    Error,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
+pub struct ServerMetaDownstreamLog {
+    timestamp: u64,
+    severity: ServerMetaDownstreamLogSeverity,
+    message: String,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
+pub struct ServerMetaDownstream {
+    pub traffic_stats: ServerMetaDownstreamTrafficStats,
+    pub server_stats: ServerMetaDownstreamServerStats,
+    pub packet_info: ServerMetaDownstreamPacketInfo,
+    pub logs: Vec<ServerMetaDownstreamLog>,
 }
 
 impl ServerMetaDownstream {
@@ -218,19 +251,12 @@ impl ServerMetaDownstream {
 }
 
 #[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
-pub struct ServerStreamInfo {
-    pub has_terminated: bool,
-    pub errors: Vec<String>,
-    pub logs: Vec<String>,
-    pub declaration_token: DeclarationToken,
-}
-
-#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
 pub struct ClientMetaUpstream {
-    pub bytes_to_send_to_remote: usize,
-    pub bytes_to_reply_to_client: usize,
-    pub messages_to_send_to_remote: usize,
-    pub messages_to_reply_to_client: usize,
+    pub bytes_to_send_to_remote: u32,
+    pub bytes_to_reply_to_client: u32,
+    pub messages_to_send_to_remote: u32,
+    pub messages_to_reply_to_client: u32,
+    pub seq_num: u32,
 }
 
 impl ClientMetaUpstream {

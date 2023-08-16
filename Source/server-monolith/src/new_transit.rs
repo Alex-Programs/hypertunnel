@@ -17,10 +17,14 @@ use debug_print::{
     debug_println as dprintln,
 };
 
+use std::sync::atomic::AtomicU32;
+
 pub struct SessionActorsStorage {
     pub to_bundler_stream: mpsc::UnboundedSender<UpStreamMessage>,
     pub from_bundler_stream: flume::Receiver<Vec<DownStreamMessage>>,
     pub key: EncryptionKey,
+    pub seq_num_down: AtomicU32,
+    pub next_seq_num_up: AtomicU32,
 }
 
 pub async fn create_actor(key: &EncryptionKey) -> SessionActorsStorage {
@@ -33,6 +37,8 @@ pub async fn create_actor(key: &EncryptionKey) -> SessionActorsStorage {
         to_bundler_stream,
         from_bundler_stream,
         key: key.clone(),
+        seq_num_down: AtomicU32::new(0),
+        next_seq_num_up: AtomicU32::new(0),
     };
 
     // Start the handler
@@ -60,19 +66,16 @@ pub async fn handle_session(
     let mut buffer: Vec<DownStreamMessage> = Vec::with_capacity(1024);
 
     loop {
-        dprintln!("Loop");
         let mut no_received_http = true;
         let mut no_received_tcp = false;
 
         // TCP to HTTP messages
         for managed_socket in &managed_sockets {
-            dprintln!("Managing socket {}", managed_socket);
             // Get the TCP handler
             stream_from_tcp_handlers
                 .entry(*managed_socket)
                 .and_modify(|tcp_handler| {
                     // Try to receive from the TCP handler
-                    dprintln!("Attempting to read from TCP handler");
                     match tcp_handler.try_recv() {
                         Ok(message) => {
                             // Add to the buffer
@@ -106,10 +109,8 @@ pub async fn handle_session(
             last_return_time = Instant::now();
         }
 
-        dprintln!("Buffer size: {}  Time elapsed: {}", buffer_size, last_return_time.elapsed().as_millis());
-
         // Check if it exceeds modetime, but there's nothing in the buffer
-        if last_return_time.elapsed() > Duration::from_millis(50) {
+        if last_return_time.elapsed() > Duration::from_millis(10) {
             if buffer_size > 0 {
                 dprintln!("Sending buffer back due to modetime!");
 
@@ -129,7 +130,6 @@ pub async fn handle_session(
         }
 
         // HTTP to TCP messages
-        dprintln!("Attempting to read from HTTP stream");
         match from_http_stream.try_recv() {
             Ok(message) => {
                 // Get the socket ID
@@ -179,9 +179,7 @@ pub async fn handle_session(
 
         if no_received_http && no_received_tcp {
             // Sleep for 1ms
-            dprintln!("Sleeping for 1ms");
             tokio::time::sleep(Duration::from_millis(1)).await;
-            dprintln!("Slept");
         }
     }
 }
@@ -254,7 +252,6 @@ pub async fn handle_tcp(
         }
 
         if ready.is_writable() {
-            dprintln!("About to try to write to the stream");
             let message = match from_http_stream.try_recv() {
                 Ok(message) => message,
                 Err(e) => {

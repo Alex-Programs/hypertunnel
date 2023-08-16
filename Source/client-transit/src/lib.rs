@@ -7,19 +7,30 @@ use libtransit::{
 };
 use rand::Rng;
 use reqwest::Client;
-use tokio::sync::mpsc::{self, Receiver, Sender};
+use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedReceiver, UnboundedSender};
 use tokio::sync::mpsc::error::TryRecvError;
 
 mod builder;
 pub use self::builder::TransitSocketBuilder;
 use reqwest::header::{HeaderMap, HeaderValue};
 use std::sync::Arc;
+use std::sync::atomic::AtomicU32;
+use std::sync::atomic::Ordering;
+
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast::{self, Receiver as BroadcastReceiver, Sender as BroadcastSender};
 use tokio::sync::RwLock;
 use tokio::task;
 
 use std::collections::HashMap;
+
+static RECEIVED_SEQ_NUM: AtomicU32 = AtomicU32::new(0);
+static SENT_SEQ_NUM: AtomicU32 = AtomicU32::new(0);
+
+use debug_print::{
+    debug_eprint as deprint, debug_eprintln as deprintln, debug_print as dprint,
+    debug_println as dprintln,
+};
 
 pub struct TransitSocket {
     target: String,                      // Base URL, incl. protocol
@@ -52,7 +63,7 @@ impl From<libsecrets::EncryptionError> for TransitInitError {
 #[derive(Clone, Debug)]
 pub struct DownstreamBackpasser {
     pub socket_id: libtransit::SocketID,
-    pub sender: Sender<DownStreamMessage>,
+    pub sender: UnboundedSender<DownStreamMessage>,
 }
 
 pub async fn connect(transit_socket: Arc<RwLock<TransitSocket>>) -> Result<(), TransitInitError> {
@@ -168,13 +179,11 @@ async fn push_handler(
 
     let timeout_duration = Duration::from_secs(timeout_time as u64);
 
-    println!("Push handler started");
+    dprintln!("Push handler started");
 
     loop {
         // Get the data to send
-        println!("Waiting for data");
         let to_send = to_send_passer.recv_async().await;
-        println!("Got data into upstream handler: {:?}", to_send);
 
         let to_send = match to_send {
             Ok(to_send) => to_send,
@@ -185,14 +194,12 @@ async fn push_handler(
             }
         };
 
-        println!("Sending data: {:?}", to_send);
-
         // Send the data
         // Encode and encrypt in a thread
         let to_send = tokio::task::spawn_blocking(move || {
             let upstream_message = ClientMessageUpstream {
                 messages: to_send,
-                metadata: get_metadata(),
+                metadata: get_metadata(SENT_SEQ_NUM.fetch_add(1, Ordering::SeqCst)),
             };
 
             let data_bin = upstream_message.encoded().unwrap();
@@ -202,7 +209,7 @@ async fn push_handler(
             encrypted
         });
 
-        println!("About to send to server");
+        dprintln!("About to send to server");
 
         // Send the data
         let response = client
@@ -215,18 +222,19 @@ async fn push_handler(
 
         let response = response.unwrap();
 
-        println!("Sent! Response code {:?}, data: {:?}", response.status(), response.bytes().await);
+        dprintln!("Sent! Response code {:?}, data: {:?}", response.status(), response.bytes().await);
 
         // TODO if things go wrong, prevent the arrival of new data until the send works. See working nicely section of todo about reconstruction and error handling.
     }
 }
 
-fn get_metadata() -> ClientMetaUpstream {
+fn get_metadata(seq_num: u32) -> ClientMetaUpstream {
     ClientMetaUpstream {
         bytes_to_send_to_remote: 0,
         bytes_to_reply_to_client: 0,
         messages_to_send_to_remote: 0,
         messages_to_reply_to_client: 0,
+        seq_num,
     }
 }
 
@@ -235,7 +243,7 @@ async fn pull_handler(
     mut messagePasserPasser: BroadcastReceiver<DownstreamBackpasser>,
 ) {
     // This will hold the return lookup and be populated by the messagePasserPassers
-    let mut return_lookup: HashMap<SocketID, Sender<DownStreamMessage>> = HashMap::new();
+    let mut return_lookup: HashMap<SocketID, UnboundedSender<DownStreamMessage>> = HashMap::new();
 
     // Create client
     let client = Client::new();
@@ -260,7 +268,7 @@ async fn pull_handler(
                     stream_messages: Vec::with_capacity(0),
                     close_socket_messages: Vec::with_capacity(0),
                 },
-                metadata: get_metadata(),
+                metadata: get_metadata(0),
             };
 
             let data_bin = upstream_message.encoded().unwrap();
@@ -282,7 +290,7 @@ async fn pull_handler(
         // Read the response
         let response = response.unwrap();
 
-        println!("Response status: {}", response.status());
+        dprintln!("Pull response status: {}", response.status());
 
         // Get the data
         let encrypted = response.bytes().await.unwrap();
@@ -292,6 +300,16 @@ async fn pull_handler(
 
         // Decode the data
         let decoded = ServerMessageDownstream::decode_from_bytes(&mut decrypted).unwrap();
+
+        let seq_num = decoded.metadata.seq_num;
+
+        while seq_num != RECEIVED_SEQ_NUM.load(Ordering::SeqCst) {
+            // Wait until the seq_num is the one we're expecting
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+
+        // Set the seq_num to the next one
+        RECEIVED_SEQ_NUM.fetch_add(1, Ordering::SeqCst);
 
         // TODO use the metadata to determine whether to kill the connection, as well as congestion control et cetera
         // for now just send the data to the appropriate socket
@@ -309,7 +327,7 @@ async fn pull_handler(
             match sender {
                 Some(sender) => {
                     // Send the message
-                    sender.send(downstream_message).await.unwrap();
+                    sender.send(downstream_message).unwrap();
                 }
                 None => {
                     // Populate the sender via iteration through the messagePasserPasser
@@ -323,7 +341,7 @@ async fn pull_handler(
                     let sender = return_lookup.get(&socket_id).unwrap();
 
                     // Send the message
-                    sender.send(downstream_message).await.unwrap();
+                    sender.send(downstream_message).unwrap();
                 }
             }
         }
@@ -366,7 +384,7 @@ pub async fn handle_transit(
 
     // TODO make this variable
     let BUFF_SIZE = 1024 * 256;
-    let MODETIME = 40; // In milliseconds
+    let MODETIME = 10; // In milliseconds
 
     let mut buffer_stream: Vec<UpStreamMessage> = Vec::new(); // TODO make these (and ones in the loop) appropriately presized
     let mut buffer_close: Vec<CloseSocketMessage> = Vec::new();
@@ -382,7 +400,7 @@ pub async fn handle_transit(
                 // Increment buffer size
                 current_buffer_size += upstream.payload.len();
 
-                println!("Gotten data to send up: {:?}", upstream);
+                dprintln!("Gotten data to send up: {:?}", upstream);
                 
                 // Add it to the buffer
                 buffer_stream.push(upstream);

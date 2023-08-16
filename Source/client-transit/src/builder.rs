@@ -124,6 +124,7 @@ impl TransitSocketBuilder {
             cpu_usage: 0.0,
             memory_usage_kb: 0,
             num_open_sockets: 0,
+            seq_num: 0,
             streams: Vec::new(),
         };
 

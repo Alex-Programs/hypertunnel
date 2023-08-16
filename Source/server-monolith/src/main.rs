@@ -23,6 +23,10 @@ use libtransit::{
     ServerMetaDownstream, ServerStreamInfo, SocketID,
 };
 
+use std::time::{Duration, Instant};
+
+use std::sync::atomic::Ordering;
+
 // State passed to all request handlers
 struct AppState {
     config: config::Config,                                     // Configuration
@@ -38,7 +42,7 @@ struct User {
     key: EncryptionKey,
 }
 
-async fn form_meta_response(app_state: &web::Data<AppState>) -> ServerMetaDownstream {
+async fn form_meta_response(app_state: &web::Data<AppState>, seq_num: u32) -> ServerMetaDownstream {
     ServerMetaDownstream {
         bytes_to_reply_to_client: 0,    // TODO
         bytes_to_send_to_remote: 0,     // TODO
@@ -48,6 +52,7 @@ async fn form_meta_response(app_state: &web::Data<AppState>) -> ServerMetaDownst
         memory_usage_kb: 0,             // TODO
         num_open_sockets: 0,            // TODO
         streams: vec![],
+        seq_num,
     }
 }
 
@@ -160,7 +165,7 @@ async fn downstream_data(
     dprintln!("Returning data: {:?}", downstream_messages);
 
     // Get meta information
-    let meta = form_meta_response(&app_state).await;
+    let meta = form_meta_response(&app_state, actor.seq_num_down.fetch_add(1, Ordering::SeqCst)).await;
 
     // Form response
     let response = ServerMessageDownstream {
@@ -251,6 +256,15 @@ async fn upstream_data(
             }
         };
 
+    // Get sequence number
+    let seq_num = upstream.metadata.seq_num;
+
+    while actor.next_seq_num_up.load(Ordering::SeqCst) != seq_num {
+        // Wait until that's the case
+        // Sleep 1ms
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+
     // Send on to actor
     dprintln!("Sending on messages to actor...");
     {
@@ -261,13 +275,15 @@ async fn upstream_data(
             to_bundler.send(message).unwrap();
         }
 
+        actor.next_seq_num_up.store(seq_num + 1, Ordering::SeqCst);
+
         dprintln!("Sent on messages to actor");
 
         dprintln!("Did not send on close socket msgs");
     }
 
     // Get meta information
-    let meta = form_meta_response(&app_state).await;
+    let meta = form_meta_response(&app_state, 0).await;
 
     // Form response
     let response = ServerMessageDownstream {
