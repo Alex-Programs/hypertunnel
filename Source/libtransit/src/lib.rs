@@ -272,28 +272,22 @@ impl ClientMetaUpstream {
 
 #[test]
 fn test_server_downstream_meta() {
-    let mut streams = Vec::new();
+    let mut logs = Vec::new();
+    let mut total_size_predict = 0;
 
-    for i in 1..100 {
-        let stream_info = ServerStreamInfo {
-            has_terminated: i % 2 == 0,
-            errors: vec![format!("error {}", i)],
-            logs: vec![format!("log {}", i), format!("another log {}", i)],
-            declaration_token: [i; 16]
+    for i in 0..500 {
+        let log = ServerMetaDownstreamLog {
+            timestamp: i,
+            severity: ServerMetaDownstreamLogSeverity::Info,
+            message: "Hello World".to_string(),
         };
-    
-        streams.push(stream_info);
     }
 
     let server_meta = ServerMetaDownstream {
-        bytes_to_reply_to_client: 50,
-        bytes_to_send_to_remote: 32423,
-        messages_to_reply_to_client: 4283,
-        messages_to_send_to_remote: 237482,
-        cpu_usage: 4.2,
-        memory_usage_kb: 2091,
-        num_open_sockets: 42,
-        streams,
+        traffic_stats: ServerMetaDownstreamTrafficStats { http_up_to_coordinator_bytes: 0, coordinator_up_to_socket_bytes: 0, socket_down_to_coordinator_bytes: 0, coordinator_down_to_http_message_passer_bytes: 0, coordinator_down_to_http_buffer_bytes: 0, congestion_ctrl_intake_throttle: 0 },
+        server_stats: ServerMetaDownstreamServerStats { cpu_usage: 0.0, memory_usage_kb: 0 },
+        packet_info: ServerMetaDownstreamPacketInfo { unix_ms: 0, seq_num: 0 },
+        logs,
     };
 
     let mut buffer = server_meta.encoded().unwrap();
@@ -310,6 +304,7 @@ fn test_client_upstream_meta() {
         bytes_to_reply_to_client: 50,
         messages_to_send_to_remote: 237482,
         messages_to_reply_to_client: 4283,
+        seq_num: 0,
     };
 
     let mut buffer = client_meta.encoded().unwrap();
