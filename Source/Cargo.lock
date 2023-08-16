@@ -557,6 +557,7 @@ version = "0.1.0"
 name = "client-transit"
 version = "0.1.0"
 dependencies = [
+ "debug_print",
  "flume",
  "hex",
  "libsecrets",
@@ -571,6 +572,7 @@ name = "clientcore"
 version = "0.1.0"
 dependencies = [
  "client-transit",
+ "debug_print",
  "flume",
  "libsocks",
  "libtransit",

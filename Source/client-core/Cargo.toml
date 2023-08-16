@@ -11,3 +11,4 @@ client-transit = {path = "../client-transit"}
 tokio = { version = "1.30.0", features = ["net"] }
 libtransit = {path = "../libtransit"}
 flume = "0.10"
+debug_print = "1"

@@ -3,7 +3,7 @@ use libsocks;
 use libtransit::{UpStreamMessage, CloseSocketMessage};
 use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc::{self, Receiver, Sender};
+use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedReceiver, UnboundedSender};
 use tokio::sync::mpsc::error::TryRecvError;
 use std::sync::atomic::{AtomicU32, Ordering};
 use tokio::task;
@@ -12,6 +12,11 @@ use tokio::sync::broadcast::{self, Sender as BroadcastSender, Receiver as Broadc
 use std::sync::Arc;
 use tokio::io::Interest;
 use tokio::sync::RwLock;
+
+use debug_print::{
+    debug_eprint as deprint, debug_eprintln as deprintln, debug_print as dprint,
+    debug_println as dprintln,
+};
 
 pub struct ClientArguments {
     pub listen_address: String,
@@ -181,7 +186,7 @@ async fn tcp_listener(mut stream: TcpStream, upstreamPasserSend: Sender<UpStream
     let socket_id = allocate_socket_id();
 
     // Now we need to let transit know how to reply to this socket. First we create a message passer
-    let (downstreamPasserSend, mut downstreamPasserReceive): (Sender<libtransit::DownStreamMessage>, Receiver<libtransit::DownStreamMessage>) = mpsc::channel(100);
+    let (downstreamPasserSend, mut downstreamPasserReceive): (UnboundedSender<libtransit::DownStreamMessage>, UnboundedReceiver<libtransit::DownStreamMessage>) = mpsc::unbounded_channel();
 
     // Now we send the message passer to transit
     let message = client_transit::DownstreamBackpasser {
@@ -203,10 +208,12 @@ async fn tcp_listener(mut stream: TcpStream, upstreamPasserSend: Sender<UpStream
                     // Transit has sent us data
                     // Send it to the client
                     let bytes = data.payload;
+                    let length = bytes.len();
 
                     match stream.try_write(&bytes) {
                         Ok(_) => {
                             // All is fine
+                            dprintln!("Sent {} bytes to client", length);
                         },
                         Err(error) => {
                             // TODO handle properly
@@ -259,12 +266,10 @@ async fn tcp_listener(mut stream: TcpStream, upstreamPasserSend: Sender<UpStream
                 return
             }
 
-            println!("Read {} bytes from socket", bytes_read);
+            dprintln!("Read {} bytes from socket", bytes_read);
 
             // Send the data to transit
             upstreamPasserSend.send(upstream_packet).await.expect("Failed to send data to transit");
-
-            println!("Sent on to transit passer");
 
             send_seq_num += 1;
         }

@@ -13,3 +13,4 @@ rand = "0.8"
 hex = "0.4"
 tokio = { version = "1.30.0", features = ["net"] }
 flume = "0.10"
+debug_print = "1"
