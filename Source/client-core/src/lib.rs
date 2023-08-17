@@ -6,12 +6,12 @@ use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedReceiver, UnboundedSend
 use tokio::sync::mpsc::error::TryRecvError;
 use std::sync::atomic::{AtomicU32, Ordering};
 use tokio::task;
-use flume::{Sender as FlumeSender, Receiver as FlumeReceiver, self};
 use tokio::sync::broadcast::{self, Sender as BroadcastSender, Receiver as BroadcastReceiver};
 use std::sync::Arc;
 use tokio::io::Interest;
 use tokio::sync::RwLock;
 
+#[allow(unused)]
 use debug_print::{
     debug_eprint as deprint, debug_eprintln as deprintln, debug_print as dprint,
     debug_println as dprintln,
@@ -26,27 +26,26 @@ pub struct ClientArguments {
 
 // Core of the client program for now. See Obsidian
 pub async fn begin_core_client(arguments: ClientArguments) {
-    let (upstreamPasserSend, upstreamPasserReceive): (
+    let (upstream_passer_send, upstream_passer_receive): (
         Sender<UpStreamMessage>,
         Receiver<UpStreamMessage>,
     ) = mpsc::channel(10_000);
 
-    let (closePasserSend, closePasserReceive): (Sender<CloseSocketMessage>, Receiver<CloseSocketMessage>) = mpsc::channel(10_000);
+    let (close_passer_send, close_passer_receive): (Sender<CloseSocketMessage>, Receiver<CloseSocketMessage>) = mpsc::channel(10_000);
 
-    let (messagePasserPasserSend, messagePasserPasserReceive): (BroadcastSender<client_transit::DownstreamBackpasser>, BroadcastReceiver<client_transit::DownstreamBackpasser>) = broadcast::channel(100_000);
+    let (message_passer_passer_send, _): (BroadcastSender<client_transit::DownstreamBackpasser>, BroadcastReceiver<client_transit::DownstreamBackpasser>) = broadcast::channel(100_000);
     
-    let messagePasserPasserSend = Arc::new(messagePasserPasserSend);
-    let mut messagePasserPasserReceive = Arc::new(messagePasserPasserReceive);
+    let message_passer_passer_send = Arc::new(message_passer_passer_send);
 
     // Cannot transfer threads
-    let mut transit_socket = client_transit::TransitSocketBuilder::new()
+    let transit_socket = client_transit::TransitSocketBuilder::new()
         .with_target(arguments.target_host)
         .with_password(arguments.password)
         .with_client_name("Client-Core".to_string())
         .with_timeout_time(5 * 60) // Temporary till streaming is in - TODO
         .build();
 
-    let mut transit_socket = Arc::new(RwLock::new(transit_socket));
+    let transit_socket = Arc::new(RwLock::new(transit_socket));
 
     let status = client_transit::connect(transit_socket.clone()).await;
 
@@ -61,7 +60,7 @@ pub async fn begin_core_client(arguments: ClientArguments) {
     }
 
     // Now start the TCP listener in a task
-    let movedPasserPasser = messagePasserPasserSend.clone();
+    let moved_passer_passer = message_passer_passer_send.clone();
     task::spawn(async move {
         let listener = TcpListener::bind((arguments.listen_address, arguments.listen_port)).await.expect("Failed to start TCP listener");
 
@@ -69,14 +68,15 @@ pub async fn begin_core_client(arguments: ClientArguments) {
             let (socket, _) = listener.accept().await.expect("Failed to accept connection");
 
             // Spawn a task to handle the connection
-            task::spawn(tcp_listener(socket, upstreamPasserSend.clone(), closePasserSend.clone(), movedPasserPasser.clone()));
+            task::spawn(tcp_listener(socket, upstream_passer_send.clone(), close_passer_send.clone(), moved_passer_passer.clone()));
         }
     });
 
-    client_transit::handle_transit(transit_socket, upstreamPasserReceive, closePasserReceive, messagePasserPasserSend.clone()).await;
+    client_transit::handle_transit(transit_socket, upstream_passer_receive, close_passer_receive, message_passer_passer_send.clone()).await;
 }
 
-async fn tcp_listener(stream: TcpStream, upstreamPasserSend: Sender<UpStreamMessage>, closePasserSend: Sender<CloseSocketMessage>, messagePasserPasserSend: Arc<BroadcastSender<client_transit::DownstreamBackpasser>>) {
+#[allow(unused)]
+async fn tcp_listener(stream: TcpStream, upstream_passer_send: Sender<UpStreamMessage>, close_passer_send: Sender<CloseSocketMessage>, message_passer_passer_send: Arc<BroadcastSender<client_transit::DownstreamBackpasser>>) {
     // Read the first packet
     // Wait for the socket to be readable
     let mut buf = Vec::with_capacity(4096);
@@ -119,8 +119,8 @@ async fn tcp_listener(stream: TcpStream, upstreamPasserSend: Sender<UpStreamMess
                     // Sanity check
                     if connect_req.version != 4 {
                         println!("Incorrect socks version ({}) from program {}", connect_req.version, connect_req.userid);
-                        stream.writable().await;
-                        stream.try_write(&rejection_bytes);
+                        stream.writable().await.unwrap();
+                        stream.try_write(&rejection_bytes).unwrap();
                         return;
                     }
 
@@ -131,16 +131,30 @@ async fn tcp_listener(stream: TcpStream, upstreamPasserSend: Sender<UpStreamMess
                     // We don't support bind yet
                     let user_id = bind_req.userid;
                     println!("Received bind request (unsupported) from user ID {}. Killing connection", user_id);
-                    stream.writable().await;
-                    stream.try_write(&rejection_bytes);
+                    stream.writable().await.unwrap();
+                    stream.try_write(&rejection_bytes).unwrap();
                     return;
                 }
             }
         },
         Err(error) => {
             println!("Failed to parse SOCKS request: {:?}", error);
-            stream.writable().await;
-            stream.try_write(&rejection_bytes);
+            match stream.writable().await {
+                Ok(_) => {
+                    stream.try_write(&rejection_bytes).unwrap();
+                },
+                Err(error) => {
+                    println!("Failed to send rejection to client: {:?}", error);
+                }
+            };
+            match stream.try_write(&rejection_bytes) {
+                Ok(_) => {
+                    println!("Sent rejection to client");
+                },
+                Err(error) => {
+                    println!("Failed to send rejection to client: {:?}", error);
+                }
+            }
             return;
         }
     }
@@ -171,15 +185,15 @@ async fn tcp_listener(stream: TcpStream, upstreamPasserSend: Sender<UpStreamMess
     let socket_id = allocate_socket_id();
 
     // Now we need to let transit know how to reply to this socket. First we create a message passer
-    let (downstreamPasserSend, mut downstreamPasserReceive): (UnboundedSender<libtransit::DownStreamMessage>, UnboundedReceiver<libtransit::DownStreamMessage>) = mpsc::unbounded_channel();
+    let (downstream_passer_send, mut downstream_passer_receive): (UnboundedSender<libtransit::DownStreamMessage>, UnboundedReceiver<libtransit::DownStreamMessage>) = mpsc::unbounded_channel();
 
     // Now we send the message passer to transit
     let message = client_transit::DownstreamBackpasser {
         socket_id,
-        sender: downstreamPasserSend
+        sender: downstream_passer_send
     };
 
-    messagePasserPasserSend.send(message).expect("Failed to send message passer to transit");
+    message_passer_passer_send.send(message).expect("Failed to send message passer to transit");
 
     let mut send_seq_num = 0;
 
@@ -188,7 +202,7 @@ async fn tcp_listener(stream: TcpStream, upstreamPasserSend: Sender<UpStreamMess
 
         if ready.is_writable() {
             // Check if transit has sent us any data
-            match downstreamPasserReceive.try_recv() {
+            match downstream_passer_receive.try_recv() {
                 Ok(data) => {
                     // Transit has sent us data
                     // Send it to the client
@@ -254,13 +268,15 @@ async fn tcp_listener(stream: TcpStream, upstreamPasserSend: Sender<UpStreamMess
             dprintln!("Read {} bytes from socket", bytes_read);
 
             // Send the data to transit
-            upstreamPasserSend.send(upstream_packet).await.expect("Failed to send data to transit");
+            upstream_passer_send.send(upstream_packet).await.expect("Failed to send data to transit");
 
             send_seq_num += 1;
         }
     }
 }
 
+// Ignore dead code warning
+#[allow(dead_code)]
 async fn send_socks_to_transit(stream: &mut TcpStream, upstream_passer: Sender<UpStreamMessage>, close_passer: Sender<CloseSocketMessage>,socket_id: libtransit::SocketID, ip: libsocks::IPV4, port: libsocks::Port) {
     let mut buf = Vec::with_capacity(4096);
 
@@ -294,6 +310,7 @@ async fn send_socks_to_transit(stream: &mut TcpStream, upstream_passer: Sender<U
     }
 }
 
+#[allow(dead_code)]
 async fn send_transit_to_socks(stream: &mut TcpStream, mut downstream_passer_rcv: Receiver<libtransit::DownStreamMessage>) {
     let mut seq_num = 0;
     loop {

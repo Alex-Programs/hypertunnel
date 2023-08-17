@@ -1,7 +1,7 @@
 use libsecrets::{self, EncryptionKey};
 use reqwest::Client;
 use crate::TransitSocket;
-use crate::ServerMetaDownstream;
+use libtransit::ServerMetaDownstream;
 use rand;
 use reqwest::header::{HeaderMap, HeaderValue};
 use hex;
@@ -116,18 +116,6 @@ impl TransitSocketBuilder {
             None => 10,
         };
 
-        let server_meta = ServerMetaDownstream {
-            bytes_to_reply_to_client: 0,
-            bytes_to_send_to_remote: 0,
-            messages_to_reply_to_client: 0,
-            messages_to_send_to_remote: 0,
-            cpu_usage: 0.0,
-            memory_usage_kb: 0,
-            num_open_sockets: 0,
-            seq_num: 0,
-            streams: Vec::new(),
-        };
-
         let client_id_string = hex::encode(client_identifier);
         let headers = generate_headers(client_id_string, target.clone());
 
@@ -139,7 +127,6 @@ impl TransitSocketBuilder {
         TransitSocket {
             target,
             key,
-            server_meta,
             client_identifier,
             push_client_count,
             pull_client_count,

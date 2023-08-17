@@ -233,9 +233,9 @@ pub struct ServerMetaDownstreamLog {
 
 #[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
 pub struct ServerMetaDownstream {
+    pub packet_info: ServerMetaDownstreamPacketInfo,
     pub traffic_stats: ServerMetaDownstreamTrafficStats,
     pub server_stats: ServerMetaDownstreamServerStats,
-    pub packet_info: ServerMetaDownstreamPacketInfo,
     pub logs: Vec<ServerMetaDownstreamLog>,
 }
 

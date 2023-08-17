@@ -35,7 +35,6 @@ use debug_print::{
 pub struct TransitSocket {
     target: String,                      // Base URL, incl. protocol
     key: EncryptionKey,                  // Encryption key for libsecrets
-    server_meta: ServerMetaDownstream, // Statistics about the server to inform client congestion control
     client_identifier: DeclarationToken, // Identifier for this client, used as a cookie
     push_client_count: usize,          // Number of hybrid clients (Both push and pull)
     pull_client_count: usize,          // Number of pull clients
@@ -216,7 +215,7 @@ async fn push_handler(
             .post(&format!("{}/upload", target))
             .body(to_send.await.unwrap())
             .headers(headers.clone())
-            .timeout(std::time::Duration::from_secs(1)) // TODO RM
+            .timeout(timeout_duration) // TODO RM
             .send()
             .await;
 
@@ -240,7 +239,7 @@ fn get_metadata(seq_num: u32) -> ClientMetaUpstream {
 
 async fn pull_handler(
     transit_socket: Arc<RwLock<TransitSocket>>,
-    mut messagePasserPasser: BroadcastReceiver<DownstreamBackpasser>,
+    mut message_passer_passer: BroadcastReceiver<DownstreamBackpasser>,
 ) {
     // This will hold the return lookup and be populated by the messagePasserPassers
     let mut return_lookup: HashMap<SocketID, UnboundedSender<DownStreamMessage>> = HashMap::new();
@@ -301,7 +300,7 @@ async fn pull_handler(
         // Decode the data
         let decoded = ServerMessageDownstream::decode_from_bytes(&mut decrypted).unwrap();
 
-        let seq_num = decoded.metadata.seq_num;
+        let seq_num = decoded.metadata.packet_info.seq_num;
 
         while seq_num != RECEIVED_SEQ_NUM.load(Ordering::SeqCst) {
             // Wait until the seq_num is the one we're expecting
@@ -331,10 +330,10 @@ async fn pull_handler(
                 }
                 None => {
                     // Populate the sender via iteration through the messagePasserPasser
-                    for _ in 0..messagePasserPasser.len() {
-                        let messagePasser = messagePasserPasser.recv().await.unwrap();
+                    for _ in 0..message_passer_passer.len() {
+                        let message_passer = message_passer_passer.recv().await.unwrap();
                         // Blindly populate
-                        return_lookup.insert(messagePasser.socket_id, messagePasser.sender);
+                        return_lookup.insert(message_passer.socket_id, message_passer.sender);
                     }
 
                     // Try again
@@ -350,9 +349,9 @@ async fn pull_handler(
 
 pub async fn handle_transit(
     transit_socket: Arc<RwLock<TransitSocket>>,
-    mut upstreamPasserRcv: Receiver<UpStreamMessage>,
-    mut closePasserRcv: Receiver<CloseSocketMessage>,
-    messagePasserPasserSend: Arc<BroadcastSender<DownstreamBackpasser>>,
+    mut upstream_passer_rcv: Receiver<UpStreamMessage>,
+    mut close_passer_rcv: Receiver<CloseSocketMessage>,
+    message_passer_passer_send: Arc<BroadcastSender<DownstreamBackpasser>>,
 ) {
     // Spawn requisite push and pull handlers
     // Create a channel for the push handler to send to so that a random not-in-use push handler
@@ -378,7 +377,7 @@ pub async fn handle_transit(
 
     // Create the pull handlers
     for _ in 0..pull_client_count {
-        let new_receiver = messagePasserPasserSend.subscribe();
+        let new_receiver = message_passer_passer_send.subscribe();
         task::spawn(pull_handler(transit_socket.clone(), new_receiver));
     }
 
@@ -394,7 +393,7 @@ pub async fn handle_transit(
 
     loop {
         // Get data to send up
-        let stream_data = upstreamPasserRcv.try_recv();
+        let stream_data = upstream_passer_rcv.try_recv();
         match stream_data {
             Ok(upstream) => {
                 // Increment buffer size
@@ -417,7 +416,7 @@ pub async fn handle_transit(
         }
 
         // Now do it to the close socket messages
-        let close_data = closePasserRcv.try_recv();
+        let close_data = close_passer_rcv.try_recv();
         match close_data {
             Ok(close) => {
                 // Increment buffer size
