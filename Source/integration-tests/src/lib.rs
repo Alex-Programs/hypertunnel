@@ -1,4 +1,5 @@
-use client_transit::{TransitSocket, TransitSocketBuilder};
+use client_core::transit::TransitSocket;
+use client_core::transit::TransitSocketBuilder;
 
 #[cfg(test)]
 mod tests {

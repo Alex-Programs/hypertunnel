@@ -1,6 +1,6 @@
 use libsecrets::{self, EncryptionKey};
 use reqwest::Client;
-use crate::TransitSocket;
+use crate::transit::TransitSocket;
 use libtransit::ServerMetaDownstream;
 use rand;
 use reqwest::header::{HeaderMap, HeaderValue};
