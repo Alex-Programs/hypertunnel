@@ -13,6 +13,8 @@ use tokio::sync::RwLock;
 mod transit_builder;
 use transit_builder::TransitSocketBuilder;
 mod transit;
+mod meta;
+use meta::CLIENT_META_UPSTREAM;
 
 #[allow(unused)]
 use debug_print::{
@@ -217,6 +219,9 @@ async fn tcp_listener(stream: TcpStream, upstream_passer_send: Sender<UpStreamMe
                     let bytes = data.payload;
                     let length = bytes.len();
 
+                    // Decrement counter
+                    CLIENT_META_UPSTREAM.response_to_socks_bytes.fetch_sub(length as u32, Ordering::Relaxed);
+
                     is_writeable = true;
 
                     match stream.try_write(&bytes) {
@@ -280,6 +285,7 @@ async fn tcp_listener(stream: TcpStream, upstream_passer_send: Sender<UpStreamMe
             dprintln!("Read {} bytes from socket", bytes_read);
 
             // Send the data to transit
+            CLIENT_META_UPSTREAM.socks_to_coordinator_bytes.fetch_add(bytes_read as u32, Ordering::Relaxed);
             upstream_passer_send.send(upstream_packet).await.expect("Failed to send data to transit");
 
             send_seq_num += 1;
@@ -289,56 +295,6 @@ async fn tcp_listener(stream: TcpStream, upstream_passer_send: Sender<UpStreamMe
             // Wait a moment because async
             tokio::time::sleep(std::time::Duration::from_millis(1)).await;
         }
-    }
-}
-
-// Ignore dead code warning
-#[allow(dead_code)]
-async fn send_socks_to_transit(stream: &mut TcpStream, upstream_passer: Sender<UpStreamMessage>, close_passer: Sender<CloseSocketMessage>,socket_id: libtransit::SocketID, ip: libsocks::IPV4, port: libsocks::Port) {
-    let mut buf = Vec::with_capacity(4096);
-
-    let mut seq_num = 0;
-    loop {
-        let bytes_read = stream.try_read_buf(&mut buf).expect("Failed to read from socket");
-
-        // Check if the socket was closed
-        if bytes_read == 0 {
-            // The socket was closed
-            close_passer.send(CloseSocketMessage {
-                socket_id,
-                message_sequence_number: seq_num
-            }).await.expect("Failed to send close message to transit");
-            return;
-        }
-
-        // Send the data to transit
-        upstream_passer.send(UpStreamMessage {
-            socket_id,
-            message_sequence_number: seq_num,
-            dest_ip: ip,
-            dest_port: port,
-            payload: buf.clone()
-        }).await.expect("Failed to send data to transit");
-
-        // Blank the buffer
-        buf.clear();
-
-        seq_num += 1;
-    }
-}
-
-#[allow(dead_code)]
-async fn send_transit_to_socks(stream: &mut TcpStream, mut downstream_passer_rcv: Receiver<libtransit::DownStreamMessage>) {
-    let mut seq_num = 0;
-    loop {
-        let message = downstream_passer_rcv.recv().await.expect("Failed to receive message from transit");
-        
-        debug_assert!(message.message_sequence_number == seq_num, "Received message with incorrect sequence number (expected {}, got {})", seq_num, message.message_sequence_number);
-
-        seq_num += 1;
-
-        // Send the data to the socket
-        stream.try_write(&message.payload).expect("Failed to write to socket");
     }
 }
 

@@ -25,6 +25,8 @@ use std::collections::HashMap;
 static RECEIVED_SEQ_NUM: AtomicU32 = AtomicU32::new(0);
 static SENT_SEQ_NUM: AtomicU32 = AtomicU32::new(0);
 
+use crate::meta::CLIENT_META_UPSTREAM;
+
 use debug_print::{
     debug_eprint as deprint, debug_eprintln as deprintln, debug_print as dprint,
     debug_println as dprintln,
@@ -34,12 +36,12 @@ pub struct TransitSocket {
     pub target: String,                      // Base URL, incl. protocol
     pub key: EncryptionKey,                  // Encryption key for libsecrets
     pub client_identifier: DeclarationToken, // Identifier for this client, used as a cookie
-    pub push_client_count: usize,          // Number of hybrid clients (Both push and pull)
-    pub pull_client_count: usize,          // Number of pull clients
-    pub timeout_time: usize,               // Time in seconds before a request is considered timed out
-    pub headers: HeaderMap,                // Headers to send with requests. Includes client identifier
-    pub is_initialized: bool, // Whether the socket has been initialized by greeting the server
-    pub client_name: String,  // Name of the client
+    pub push_client_count: usize,            // Number of hybrid clients (Both push and pull)
+    pub pull_client_count: usize,            // Number of pull clients
+    pub timeout_time: usize,                 // Time in seconds before a request is considered timed out
+    pub headers: HeaderMap,                  // Headers to send with requests. Includes client identifier
+    pub is_initialized: bool,                // Whether the socket has been initialized by greeting the server
+    pub client_name: String,                 // Name of the client
 }
 
 #[derive(Debug)]
@@ -191,6 +193,16 @@ async fn push_handler(
             }
         };
 
+        // Get the size of the multiple messages
+        let mut payload_size: u32 = to_send.stream_messages.iter().map(|x| x.payload.len() as u32).sum();
+        payload_size += (to_send.close_socket_messages.len() * 512) as u32;
+
+        // Decrement the counter
+        CLIENT_META_UPSTREAM.coordinator_to_request_channel_bytes.fetch_sub(payload_size, Ordering::Relaxed);
+
+        // Increment RIP
+        CLIENT_META_UPSTREAM.up_request_in_progress_bytes.fetch_add(payload_size, Ordering::Relaxed);
+
         // Send the data
         // Encode and encrypt in a thread
         
@@ -215,6 +227,9 @@ async fn push_handler(
             .timeout(timeout_duration) // TODO RM
             .send()
             .await;
+
+        // Decrement RIP
+        CLIENT_META_UPSTREAM.up_request_in_progress_bytes.fetch_sub(payload_size, Ordering::Relaxed);
 
         let response = response.unwrap();
 
@@ -325,7 +340,10 @@ async fn pull_handler(
             match sender {
                 Some(sender) => {
                     // Send the message
+                    let size = downstream_message.payload.len() as u32;
                     sender.send(downstream_message).unwrap();
+                    // Increment the counter
+                    CLIENT_META_UPSTREAM.response_to_socks_bytes.fetch_add(size, Ordering::Relaxed);
                 }
                 None => {
                     // Populate the sender via iteration through the messagePasserPasser
@@ -396,12 +414,19 @@ pub async fn handle_transit(
         match stream_data {
             Ok(upstream) => {
                 // Increment buffer size
-                current_buffer_size += upstream.payload.len();
+                let size = upstream.payload.len() as u32;
+                current_buffer_size += size;
+
+                // Take away from socks_to_coordinator
+                CLIENT_META_UPSTREAM.socks_to_coordinator_bytes.fetch_sub(size, Ordering::Relaxed);
 
                 dprintln!("Gotten data to send up: {:?}", upstream);
                 
                 // Add it to the buffer
                 buffer_stream.push(upstream);
+
+                // Increase the buffer size recorded
+                CLIENT_META_UPSTREAM.coordinator_to_request_buffer_bytes.fetch_add(size, Ordering::Relaxed);
             }
             Err(error) => {
                 match error {
@@ -422,9 +447,12 @@ pub async fn handle_transit(
         match close_data {
             Ok(close) => {
                 // Increment buffer size
-                current_buffer_size += 2048; // Approxish I guess
+                current_buffer_size += 512; // Approxish I guess. If this changes you need to change it when we decrement in upstream
                                              // Add it to the buffer
                 buffer_close.push(close);
+
+                // Increase the buffer size recorded
+                CLIENT_META_UPSTREAM.coordinator_to_request_buffer_bytes.fetch_add(512, Ordering::Relaxed);
             }
             Err(error) => {
                 match error {
@@ -446,6 +474,12 @@ pub async fn handle_transit(
                 close_socket_messages: buffer_close,
             };
             push_passer_send.send_async(multiple_messages).await.unwrap();
+            // Set recorded buffer size to 0
+            CLIENT_META_UPSTREAM.coordinator_to_request_buffer_bytes.store(0, Ordering::Relaxed);
+
+            // Increment egress buffer
+            CLIENT_META_UPSTREAM.coordinator_to_request_channel_bytes.fetch_add(current_buffer_size, Ordering::Relaxed);
+
             // Reset buffer
             buffer_stream = Vec::new();
             buffer_close = Vec::new();
@@ -465,6 +499,12 @@ pub async fn handle_transit(
             };
             println!("Sending data on due to modetime");
             push_passer_send.send_async(multiple_messages).await.unwrap();
+            // Set recorded buffer size to 0
+            CLIENT_META_UPSTREAM.coordinator_to_request_buffer_bytes.store(0, Ordering::Relaxed);
+
+            // Increment egress buffer
+            CLIENT_META_UPSTREAM.coordinator_to_request_channel_bytes.fetch_add(current_buffer_size, Ordering::Relaxed);
+
             // Reset buffer
             buffer_close = Vec::new();
             buffer_stream = Vec::new();
