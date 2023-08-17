@@ -554,28 +554,17 @@ name = "client-gui"
 version = "0.1.0"
 
 [[package]]
-name = "client-transit"
-version = "0.1.0"
+name = "clientcore"
+version = "0.2.0"
 dependencies = [
  "debug_print",
  "flume",
  "hex",
  "libsecrets",
+ "libsocks",
  "libtransit",
  "rand",
  "reqwest",
- "tokio",
-]
-
-[[package]]
-name = "clientcore"
-version = "0.1.0"
-dependencies = [
- "client-transit",
- "debug_print",
- "flume",
- "libsocks",
- "libtransit",
  "tokio",
 ]
 
@@ -1109,7 +1098,7 @@ dependencies = [
 name = "integration-tests"
 version = "0.1.0"
 dependencies = [
- "client-transit",
+ "clientcore",
  "once_cell",
 ]
 

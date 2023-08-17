@@ -1,4 +1,3 @@
-use client_transit;
 use libsocks;
 use libtransit::{UpStreamMessage, CloseSocketMessage};
 use tokio::io::AsyncReadExt;
@@ -11,6 +10,10 @@ use tokio::sync::broadcast::{self, Sender as BroadcastSender, Receiver as Broadc
 use std::sync::Arc;
 use tokio::io::Interest;
 use tokio::sync::RwLock;
+
+mod transit_builder;
+use transit_builder::TransitSocketBuilder;
+mod transit;
 
 #[allow(unused)]
 use debug_print::{
@@ -34,12 +37,12 @@ pub async fn begin_core_client(arguments: ClientArguments) {
 
     let (close_passer_send, close_passer_receive): (Sender<CloseSocketMessage>, Receiver<CloseSocketMessage>) = mpsc::channel(10_000);
 
-    let (message_passer_passer_send, _): (BroadcastSender<client_transit::DownstreamBackpasser>, BroadcastReceiver<client_transit::DownstreamBackpasser>) = broadcast::channel(100_000);
+    let (message_passer_passer_send, _): (BroadcastSender<transit::DownstreamBackpasser>, BroadcastReceiver<transit::DownstreamBackpasser>) = broadcast::channel(100_000);
     
     let message_passer_passer_send = Arc::new(message_passer_passer_send);
 
     // Cannot transfer threads
-    let transit_socket = client_transit::TransitSocketBuilder::new()
+    let transit_socket = TransitSocketBuilder::new()
         .with_target(arguments.target_host)
         .with_password(arguments.password)
         .with_client_name("Client-Core".to_string())
@@ -50,7 +53,7 @@ pub async fn begin_core_client(arguments: ClientArguments) {
 
     let transit_socket = Arc::new(RwLock::new(transit_socket));
 
-    let status = client_transit::connect(transit_socket.clone()).await;
+    let status = transit::connect(transit_socket.clone()).await;
 
     match status {
         Ok(_) => {
@@ -75,11 +78,11 @@ pub async fn begin_core_client(arguments: ClientArguments) {
         }
     });
 
-    client_transit::handle_transit(transit_socket, upstream_passer_receive, close_passer_receive, message_passer_passer_send.clone()).await;
+    transit::handle_transit(transit_socket, upstream_passer_receive, close_passer_receive, message_passer_passer_send.clone()).await;
 }
 
 #[allow(unused)]
-async fn tcp_listener(mut stream: TcpStream, upstream_passer_send: Sender<UpStreamMessage>, close_passer_send: Sender<CloseSocketMessage>, message_passer_passer_send: Arc<BroadcastSender<client_transit::DownstreamBackpasser>>) {
+async fn tcp_listener(mut stream: TcpStream, upstream_passer_send: Sender<UpStreamMessage>, close_passer_send: Sender<CloseSocketMessage>, message_passer_passer_send: Arc<BroadcastSender<transit::DownstreamBackpasser>>) {
     const MAX_SOCKS_REQUEST_LENGTH: usize = 4096;
 
     // Read the first packet
@@ -205,7 +208,7 @@ async fn tcp_listener(mut stream: TcpStream, upstream_passer_send: Sender<UpStre
     let (downstream_passer_send, mut downstream_passer_receive): (UnboundedSender<libtransit::DownStreamMessage>, UnboundedReceiver<libtransit::DownStreamMessage>) = mpsc::unbounded_channel();
 
     // Now we send the message passer to transit
-    let message = client_transit::DownstreamBackpasser {
+    let message = transit::DownstreamBackpasser {
         socket_id,
         sender: downstream_passer_send
     };

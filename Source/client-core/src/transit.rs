@@ -10,8 +10,6 @@ use reqwest::Client;
 use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedReceiver, UnboundedSender};
 use tokio::sync::mpsc::error::TryRecvError;
 
-mod builder;
-pub use self::builder::TransitSocketBuilder;
 use reqwest::header::{HeaderMap, HeaderValue};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
@@ -33,15 +31,15 @@ use debug_print::{
 };
 
 pub struct TransitSocket {
-    target: String,                      // Base URL, incl. protocol
-    key: EncryptionKey,                  // Encryption key for libsecrets
-    client_identifier: DeclarationToken, // Identifier for this client, used as a cookie
-    push_client_count: usize,          // Number of hybrid clients (Both push and pull)
-    pull_client_count: usize,          // Number of pull clients
-    timeout_time: usize,               // Time in seconds before a request is considered timed out
-    headers: HeaderMap,                // Headers to send with requests. Includes client identifier
-    is_initialized: bool, // Whether the socket has been initialized by greeting the server
-    client_name: String,  // Name of the client
+    pub target: String,                      // Base URL, incl. protocol
+    pub key: EncryptionKey,                  // Encryption key for libsecrets
+    pub client_identifier: DeclarationToken, // Identifier for this client, used as a cookie
+    pub push_client_count: usize,          // Number of hybrid clients (Both push and pull)
+    pub pull_client_count: usize,          // Number of pull clients
+    pub timeout_time: usize,               // Time in seconds before a request is considered timed out
+    pub headers: HeaderMap,                // Headers to send with requests. Includes client identifier
+    pub is_initialized: bool, // Whether the socket has been initialized by greeting the server
+    pub client_name: String,  // Name of the client
 }
 
 #[derive(Debug)]
