@@ -195,6 +195,7 @@ async fn push_handler(
 
         // Send the data
         // Encode and encrypt in a thread
+        
         let to_send = tokio::task::spawn_blocking(move || {
             let upstream_message = ClientMessageUpstream {
                 messages: to_send,
@@ -207,8 +208,6 @@ async fn push_handler(
 
             encrypted
         });
-
-        dprintln!("About to send to server");
 
         // Send the data
         let response = client
@@ -276,6 +275,8 @@ async fn pull_handler(
 
             encrypted
         };
+
+        let send_time = Instant::now();
 
         // Send the data
         let response = client
@@ -406,7 +407,10 @@ pub async fn handle_transit(
             }
             Err(error) => {
                 match error {
-                    TryRecvError::Empty => {}
+                    TryRecvError::Empty => {
+                        // Wait 1ms
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+                    }
                     TryRecvError::Disconnected => {
                         // TODO handle this
                         panic!("Upstream passer disconnected");
