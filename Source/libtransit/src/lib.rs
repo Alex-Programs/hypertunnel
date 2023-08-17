@@ -251,12 +251,31 @@ impl ServerMetaDownstream {
 }
 
 #[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
-pub struct ClientMetaUpstream {
-    pub bytes_to_send_to_remote: u32,
-    pub bytes_to_reply_to_client: u32,
-    pub messages_to_send_to_remote: u32,
-    pub messages_to_reply_to_client: u32,
+pub struct ClientMetaUpstreamTrafficStats {
+    pub socks_to_coordinator_bytes: u32,
+    pub coordinator_to_request_buffer_bytes: u32,
+    pub coordinator_to_request_channel_bytes: u32,
+    pub up_request_in_progress_bytes: u32,
+    pub response_to_socks_bytes: u32,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
+pub struct ClientMetaUpstreamPacketInfo {
+    pub unix_ms: u64, // As u32 it would only last 49 days
     pub seq_num: u32,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
+pub struct ClientMetaUpstreamSet {
+    pub buffer_size_to_return: u32,
+    pub modetime_to_return: u32,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
+pub struct ClientMetaUpstream {
+    pub packet_info: ClientMetaUpstreamPacketInfo,
+    pub traffic_stats: ClientMetaUpstreamTrafficStats,
+    pub set: Option<ClientMetaUpstreamSet>,
 }
 
 impl ClientMetaUpstream {
