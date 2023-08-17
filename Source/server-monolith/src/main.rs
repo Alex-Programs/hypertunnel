@@ -1,4 +1,5 @@
 use actix_web::dev::Server;
+use actix_web::rt::System;
 use actix_web::web::Bytes;
 use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use hex;
@@ -20,10 +21,12 @@ use new_transit::SessionActorsStorage;
 
 use libtransit::{
     ClientMessageUpstream, DeclarationToken, ServerMessageDownstream,
-    ServerMetaDownstream, ServerStreamInfo, SocketID,
+    ServerMetaDownstream, SocketID,
 };
 
-use std::time::{Duration, Instant};
+mod meta;
+
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use std::sync::atomic::Ordering;
 
@@ -42,17 +45,17 @@ struct User {
     key: EncryptionKey,
 }
 
-async fn form_meta_response(app_state: &web::Data<AppState>, seq_num: u32) -> ServerMetaDownstream {
+async fn form_meta_response(session_actor_storage: &SessionActorsStorage, seq_num: u32) -> ServerMetaDownstream {
+    let millis_time = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_millis();
+
+    let traffic_stats = (*session_actor_storage.traffic_stats).into_server_meta_downstream_traffic_stats();
+    println!("Traffic stats: {:?}", traffic_stats);
+
     ServerMetaDownstream {
-        bytes_to_reply_to_client: 0,    // TODO
-        bytes_to_send_to_remote: 0,     // TODO
-        messages_to_reply_to_client: 0, // TODO
-        messages_to_send_to_remote: 0,  // TODO
-        cpu_usage: 0.0,                 // TODO
-        memory_usage_kb: 0,             // TODO
-        num_open_sockets: 0,            // TODO
-        streams: vec![],
-        seq_num,
+        packet_info: libtransit::ServerMetaDownstreamPacketInfo { unix_ms: millis_time as u64, seq_num: seq_num },
+        server_stats: libtransit::ServerMetaDownstreamServerStats { cpu_usage: 0.0, memory_usage_kb: 0 },
+        logs: Vec::new(),
+        traffic_stats,
     }
 }
 
@@ -162,10 +165,18 @@ async fn downstream_data(
         }
     };
 
+    // Modify traffic stats
+    let return_msgs_bytes = downstream_messages
+        .iter()
+        .map(|msg| msg.payload.len())
+        .sum::<usize>();
+
+    actor.traffic_stats.coordinator_down_to_http_message_passer_bytes.fetch_sub(return_msgs_bytes as u32, Ordering::Relaxed);
+
     dprintln!("Returning data: {:?}", downstream_messages);
 
     // Get meta information
-    let meta = form_meta_response(&app_state, actor.seq_num_down.fetch_add(1, Ordering::SeqCst)).await;
+    let meta = form_meta_response(&actor, actor.seq_num_down.fetch_add(1, Ordering::SeqCst)).await;
 
     // Form response
     let response = ServerMessageDownstream {
@@ -272,7 +283,9 @@ async fn upstream_data(
 
         // Send messages on
         for message in upstream.messages.stream_messages {
+            let payload_length = message.payload.len();
             to_bundler.send(message).unwrap();
+            actor.traffic_stats.http_up_to_coordinator_bytes.fetch_add(payload_length as u32, Ordering::Relaxed);
         }
 
         actor.next_seq_num_up.store(seq_num + 1, Ordering::SeqCst);
@@ -283,7 +296,7 @@ async fn upstream_data(
     }
 
     // Get meta information
-    let meta = form_meta_response(&app_state, 0).await;
+    let meta = form_meta_response(&actor, 0).await;
 
     // Form response
     let response = ServerMessageDownstream {
@@ -392,7 +405,7 @@ async fn client_greeting(
     dprintln!("Formed response: {:?}", encrypted);
 
     // Create actor
-    let actor_storage = new_transit::create_actor(&key).await;
+    let actor_storage = new_transit::create_actor(&key, token).await;
     // Add to sessions
     app_state.actor_lookup.insert(token, actor_storage);
 

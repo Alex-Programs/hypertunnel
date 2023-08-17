@@ -43,6 +43,8 @@ pub async fn begin_core_client(arguments: ClientArguments) {
         .with_password(arguments.password)
         .with_client_name("Client-Core".to_string())
         .with_timeout_time(5 * 60) // Temporary till streaming is in - TODO
+        .with_pull_client_count(8)
+        .with_push_client_count(8)
         .build();
 
     let transit_socket = Arc::new(RwLock::new(transit_socket));
@@ -198,6 +200,9 @@ async fn tcp_listener(stream: TcpStream, upstream_passer_send: Sender<UpStreamMe
     let mut send_seq_num = 0;
 
     loop {
+        let mut is_writeable = false;
+        let mut is_readable = false;
+
         let ready = stream.ready(Interest::READABLE | Interest::WRITABLE).await.expect("Failed to wait for socket to be ready");
 
         if ready.is_writable() {
@@ -208,6 +213,8 @@ async fn tcp_listener(stream: TcpStream, upstream_passer_send: Sender<UpStreamMe
                     // Send it to the client
                     let bytes = data.payload;
                     let length = bytes.len();
+
+                    is_writeable = true;
 
                     match stream.try_write(&bytes) {
                         Ok(_) => {
@@ -258,6 +265,8 @@ async fn tcp_listener(stream: TcpStream, upstream_passer_send: Sender<UpStreamMe
                 }
             };
 
+            is_readable = true;
+
             // Check if the socket was closed
             if bytes_read == 0 {
                 // The socket was closed
@@ -271,6 +280,11 @@ async fn tcp_listener(stream: TcpStream, upstream_passer_send: Sender<UpStreamMe
             upstream_passer_send.send(upstream_packet).await.expect("Failed to send data to transit");
 
             send_seq_num += 1;
+        }
+
+        if !is_readable && !is_writeable {
+            // Wait a moment because async
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
         }
     }
 }
