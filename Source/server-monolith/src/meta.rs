@@ -1,5 +1,6 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use libtransit::ServerMetaDownstreamTrafficStats;
+use std::time::{UNIX_EPOCH, SystemTime};
 
 #[derive(Debug)]
 pub struct ServerMetaDownstreamTrafficStatsSynced {
@@ -23,4 +24,10 @@ impl ServerMetaDownstreamTrafficStatsSynced {
             congestion_ctrl_intake_throttle: self.congestion_ctrl_intake_throttle.load(Ordering::Relaxed),
         }
     }
+}
+
+pub fn ms_since_epoch() -> u64 {
+    let now = SystemTime::now();
+    let since_the_epoch = now.duration_since(UNIX_EPOCH).unwrap();
+    since_the_epoch.as_secs() * 1000 + since_the_epoch.subsec_nanos() as u64 / 1_000_000
 }

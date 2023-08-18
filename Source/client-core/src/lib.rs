@@ -212,15 +212,18 @@ async fn tcp_listener(stream: TcpStream, upstream_passer_send: Sender<UpStreamMe
 
         if ready.is_writable() {
             // Check if transit has sent us any data
+            dprintln!("Checking if we can send data as reported writeable");
             match downstream_passer_receive.try_recv() {
                 Ok(data) => {
+                    dprintln!("Sending data to client as reported writeable and have gotten data");
+
                     // Transit has sent us data
                     // Send it to the client
                     let bytes = data.payload;
                     let length = bytes.len();
 
                     // Decrement counter
-                    CLIENT_META_UPSTREAM.response_to_socks_bytes.fetch_sub(length as u32, Ordering::Relaxed);
+                    CLIENT_META_UPSTREAM.response_to_socks_bytes.fetch_sub(length as u32, Ordering::SeqCst);
 
                     is_writeable = true;
 
@@ -237,6 +240,7 @@ async fn tcp_listener(stream: TcpStream, upstream_passer_send: Sender<UpStreamMe
                     }
                 },
                 Err(error) => {
+                    dprintln!("Wanted to send data to client as reported writeable but failed to receive data from transit: {:?}", error);
                     match error {
                         TryRecvError::Empty => {
                             // No data from transit
@@ -244,6 +248,12 @@ async fn tcp_listener(stream: TcpStream, upstream_passer_send: Sender<UpStreamMe
                             tokio::time::sleep(std::time::Duration::from_millis(1)).await;
                             // DO NOT continue, we still need to read
                         },
+                        TryRecvError::Disconnected => {
+                            // Transit has disconnected
+                            // TODO handle properly
+                            eprintln!("Transit has disconnected; socket cannot be sustained");
+                            return
+                        }
                         _ => {
                             // TODO handle properly
                             eprintln!("Failed to receive data from transit: {:?}", error);
@@ -252,6 +262,8 @@ async fn tcp_listener(stream: TcpStream, upstream_passer_send: Sender<UpStreamMe
                     };
                 }
             };
+        } else {
+            dprintln!("Not checking if we can send data as not reported writeable")
         }
 
         if ready.is_readable() {
@@ -260,7 +272,14 @@ async fn tcp_listener(stream: TcpStream, upstream_passer_send: Sender<UpStreamMe
                 message_sequence_number: send_seq_num,
                 dest_ip: dstip,
                 dest_port: dstport,
-                payload: Vec::with_capacity(0)
+                payload: Vec::with_capacity(0),
+                time_ingress_client_ms: meta::ms_since_epoch(),
+                time_at_coordinator_ms: 0,
+                time_at_client_egress_ms: 0,
+                time_at_server_ingress_ms: 0,
+                time_at_server_coordinator_ms: 0,
+                time_at_server_socket_ms: 0,
+                time_client_write_finished_ms: 0,
             };
 
             // Read into the payload buffer

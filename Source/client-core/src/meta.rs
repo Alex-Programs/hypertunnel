@@ -1,5 +1,6 @@
 use libtransit::{self, ClientMetaUpstreamTrafficStats};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 pub struct ClientMetaUpstreamTrafficStatsAtomic {
     pub socks_to_coordinator_bytes: AtomicU32,
@@ -32,4 +33,10 @@ impl ClientMetaUpstreamTrafficStatsAtomic {
             response_to_socks_bytes: self.response_to_socks_bytes.load(Ordering::Relaxed),
         }
     }
+}
+
+pub fn ms_since_epoch() -> u64 {
+    let now = SystemTime::now();
+    let since_the_epoch = now.duration_since(UNIX_EPOCH).unwrap();
+    since_the_epoch.as_secs() * 1000 + since_the_epoch.subsec_nanos() as u64 / 1_000_000
 }

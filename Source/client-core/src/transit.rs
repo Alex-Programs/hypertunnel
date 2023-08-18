@@ -1,6 +1,6 @@
 use flume::{self, Receiver as FlumeReceiver, Sender as FlumeSender};
 use libsecrets::{self, EncryptionKey};
-use libtransit::{self, CloseSocketMessage, MultipleMessagesUpstream};
+use libtransit::{self, CloseSocketMessage, MultipleMessagesUpstream, ClientMetaUpstreamPacketInfo, ClientMetaUpstreamTrafficStats};
 use libtransit::{
     ClientMessageUpstream, ClientMetaUpstream, DeclarationToken, DownStreamMessage,
     ServerMessageDownstream, ServerMetaDownstream, SocketID, UpStreamMessage,
@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering;
 
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast::{self, Receiver as BroadcastReceiver, Sender as BroadcastSender};
 use tokio::sync::RwLock;
 use tokio::task;
@@ -25,7 +25,7 @@ use std::collections::HashMap;
 static RECEIVED_SEQ_NUM: AtomicU32 = AtomicU32::new(0);
 static SENT_SEQ_NUM: AtomicU32 = AtomicU32::new(0);
 
-use crate::meta::CLIENT_META_UPSTREAM;
+use crate::meta::{CLIENT_META_UPSTREAM, ms_since_epoch};
 
 use debug_print::{
     debug_eprint as deprint, debug_eprintln as deprintln, debug_print as dprint,
@@ -184,7 +184,7 @@ async fn push_handler(
         // Get the data to send
         let to_send = to_send_passer.recv_async().await;
 
-        let to_send = match to_send {
+        let mut to_send = match to_send {
             Ok(to_send) => to_send,
             Err(_) => {
                 // TODO handle this
@@ -192,6 +192,8 @@ async fn push_handler(
                 continue;
             }
         };
+
+        let time_at_client_egress = ms_since_epoch();
 
         // Get the size of the multiple messages
         let mut payload_size: u32 = to_send.stream_messages.iter().map(|x| x.payload.len() as u32).sum();
@@ -205,8 +207,12 @@ async fn push_handler(
 
         // Send the data
         // Encode and encrypt in a thread
-        
         let to_send = tokio::task::spawn_blocking(move || {
+            // Go through to_send and add information for when they arrived at client egress
+            for stream_message in to_send.stream_messages.iter_mut() {
+                stream_message.time_at_client_egress_ms = time_at_client_egress;
+            }
+
             let upstream_message = ClientMessageUpstream {
                 messages: to_send,
                 metadata: get_metadata(SENT_SEQ_NUM.fetch_add(1, Ordering::SeqCst)),
@@ -240,13 +246,21 @@ async fn push_handler(
 }
 
 fn get_metadata(seq_num: u32) -> ClientMetaUpstream {
-    ClientMetaUpstream {
-        bytes_to_send_to_remote: 0,
-        bytes_to_reply_to_client: 0,
-        messages_to_send_to_remote: 0,
-        messages_to_reply_to_client: 0,
-        seq_num,
-    }
+    let data = ClientMetaUpstream {
+        packet_info: ClientMetaUpstreamPacketInfo {
+            unix_ms: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64,
+            seq_num,
+        },
+        set: None,
+        traffic_stats: CLIENT_META_UPSTREAM.as_base(),
+    };
+
+    dprintln!("Sending metadata: {:?}", data);
+
+    data
 }
 
 async fn pull_handler(
@@ -339,11 +353,12 @@ async fn pull_handler(
 
             match sender {
                 Some(sender) => {
-                    // Send the message
                     let size = downstream_message.payload.len() as u32;
-                    sender.send(downstream_message).unwrap();
                     // Increment the counter
-                    CLIENT_META_UPSTREAM.response_to_socks_bytes.fetch_add(size, Ordering::Relaxed);
+                    CLIENT_META_UPSTREAM.response_to_socks_bytes.fetch_add(size, Ordering::SeqCst);
+
+                    // Send the message
+                    sender.send(downstream_message).unwrap();
                 }
                 None => {
                     // Populate the sender via iteration through the messagePasserPasser
@@ -356,11 +371,18 @@ async fn pull_handler(
                     // Try again
                     let sender = return_lookup.get(&socket_id).unwrap();
 
+                    // Increment the counter
+                    let size = downstream_message.payload.len() as u32;
+                    CLIENT_META_UPSTREAM.response_to_socks_bytes.fetch_add(size, Ordering::SeqCst);
+
                     // Send the message
                     sender.send(downstream_message).unwrap();
                 }
             }
         }
+
+        // Print stats
+        dprintln!("Meta stats: {:?}", CLIENT_META_UPSTREAM.as_base());
     }
 }
 
@@ -407,18 +429,29 @@ pub async fn handle_transit(
 
     let mut last_upstream_time = Instant::now();
     let mut current_buffer_size = 0;
+    let mut last_loop_time = Instant::now();
 
     loop {
+        let delta  = Instant::now() - last_loop_time;
+        if delta > Duration::from_millis(3) {
+            println!("Transit took an unusual amount of time ({}ms) to iterate", delta.as_millis());
+        }
+        last_loop_time = Instant::now();
+
         // Get data to send up
         let stream_data = upstream_passer_rcv.try_recv();
         match stream_data {
-            Ok(upstream) => {
+            Ok(mut upstream) => {
                 // Increment buffer size
                 let size = upstream.payload.len() as u32;
                 current_buffer_size += size;
 
                 // Take away from socks_to_coordinator
                 CLIENT_META_UPSTREAM.socks_to_coordinator_bytes.fetch_sub(size, Ordering::Relaxed);
+
+                // Add in timing info
+                let now_ms = ms_since_epoch();
+                upstream.time_at_coordinator_ms = now_ms;
 
                 dprintln!("Gotten data to send up: {:?}", upstream);
                 
@@ -432,34 +465,19 @@ pub async fn handle_transit(
                 match error {
                     TryRecvError::Empty => {
                         // Wait 1ms
+                        let start_time = Instant::now();
                         tokio::time::sleep(Duration::from_millis(1)).await;
+                        let end_time = Instant::now();
+                        let delta = end_time - start_time;
+                        let delta_us = delta.as_micros();
+                        let delta_ms: f32 = delta_us as f32 / 1000.0;
+                        if delta_ms > 10.0 {
+                            eprintln!("Took {}ms to sleep targeted 1ms", delta_ms);
+                        }
                     }
                     TryRecvError::Disconnected => {
                         // TODO handle this
                         panic!("Upstream passer disconnected");
-                    }
-                }
-            }
-        }
-
-        // Now do it to the close socket messages
-        let close_data = close_passer_rcv.try_recv();
-        match close_data {
-            Ok(close) => {
-                // Increment buffer size
-                current_buffer_size += 512; // Approxish I guess. If this changes you need to change it when we decrement in upstream
-                                             // Add it to the buffer
-                buffer_close.push(close);
-
-                // Increase the buffer size recorded
-                CLIENT_META_UPSTREAM.coordinator_to_request_buffer_bytes.fetch_add(512, Ordering::Relaxed);
-            }
-            Err(error) => {
-                match error {
-                    TryRecvError::Empty => {}
-                    TryRecvError::Disconnected => {
-                        // TODO handle this
-                        panic!("Close socket passer disconnected");
                     }
                 }
             }
@@ -516,8 +534,8 @@ pub async fn handle_transit(
 
         // If we're above mode time and this is the first piece of data, reset the last upstream time
         if last_upstream_time.elapsed().as_millis() > MODETIME
-            && (buffer_close.len() > 1
-            || buffer_stream.len() > 1)
+            && (buffer_close.len() == 1
+            || buffer_stream.len() == 1)
         {
             last_upstream_time = Instant::now();
         }

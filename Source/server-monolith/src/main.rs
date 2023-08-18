@@ -49,7 +49,6 @@ async fn form_meta_response(session_actor_storage: &SessionActorsStorage, seq_nu
     let millis_time = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_millis();
 
     let traffic_stats = (*session_actor_storage.traffic_stats).into_server_meta_downstream_traffic_stats();
-    println!("Traffic stats: {:?}", traffic_stats);
 
     ServerMetaDownstream {
         packet_info: libtransit::ServerMetaDownstreamPacketInfo { unix_ms: millis_time as u64, seq_num: seq_num },
@@ -257,7 +256,7 @@ async fn upstream_data(
     dprintln!("Decrypted data");
 
     // Parse into ClientMessageUpstream
-    let upstream: ClientMessageUpstream =
+    let mut upstream: ClientMessageUpstream =
         match libtransit::ClientMessageUpstream::decode_from_bytes(&mut decrypted) {
             Ok(upstream) => upstream, // If it succeeds, pull out content from Result<>
             Err(_) => {
@@ -268,7 +267,7 @@ async fn upstream_data(
         };
 
     // Get sequence number
-    let seq_num = upstream.metadata.seq_num;
+    let seq_num = upstream.metadata.packet_info.seq_num;
 
     while actor.next_seq_num_up.load(Ordering::SeqCst) != seq_num {
         // Wait until that's the case
@@ -276,14 +275,22 @@ async fn upstream_data(
         tokio::time::sleep(Duration::from_millis(1)).await;
     }
 
+    let ingress_time = meta::ms_since_epoch();
+
     // Send on to actor
     dprintln!("Sending on messages to actor...");
     {
         let to_bundler = &actor.to_bundler_stream;
 
+        // Set ingress time on each message
+        for message in upstream.messages.stream_messages.iter_mut() {
+            message.time_at_server_ingress_ms = ingress_time;
+        }
+
         // Send messages on
         for message in upstream.messages.stream_messages {
             let payload_length = message.payload.len();
+
             to_bundler.send(message).unwrap();
             actor.traffic_stats.http_up_to_coordinator_bytes.fetch_add(payload_length as u32, Ordering::Relaxed);
         }
