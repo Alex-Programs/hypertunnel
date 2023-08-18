@@ -157,7 +157,10 @@ pub async fn handle_session(
 
         // HTTP to TCP messages
         match from_http_stream.try_recv() {
-            Ok(message) => {
+            Ok(mut message) => {
+                // Set ingress time
+                message.time_at_server_coordinator_ms = meta::ms_since_epoch();
+
                 // Get the socket ID
                 let socket_id = message.socket_id;
 
@@ -287,7 +290,7 @@ pub async fn handle_tcp(
         }
 
         if ready.is_writable() {
-            let message = match from_http_stream.try_recv() {
+            let mut message = match from_http_stream.try_recv() {
                 Ok(message) => message,
                 Err(e) => {
                     // Check if the channel is empty
@@ -302,7 +305,7 @@ pub async fn handle_tcp(
                     }
                 }
             };
-            dprintln!("Written to the stream");
+            message.time_at_server_socket_ms = meta::ms_since_epoch();
 
             let seq_num = message.message_sequence_number;
 
@@ -312,9 +315,15 @@ pub async fn handle_tcp(
 
             let payload_size = message.payload.len() as u32;
             traffic_stats.coordinator_up_to_socket_bytes.fetch_sub(payload_size, Ordering::Relaxed);
-
+            
             // Write payload
             stream.write_all(&message.payload).await.unwrap();
+
+            message.time_client_write_finished_ms = meta::ms_since_epoch();
+
+            dprintln!("Written to the stream");
+
+            println!("Message timing info: {}", message.render_latency_information());
         }
     }
 }

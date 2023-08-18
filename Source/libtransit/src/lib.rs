@@ -56,6 +56,13 @@ pub struct UpStreamMessage {
     pub dest_ip: IPV4,
     pub dest_port: Port,
     pub payload: Vec<u8>,
+    pub time_ingress_client_ms: u64, // 56 bytes on latency information
+    pub time_at_coordinator_ms: u64,
+    pub time_at_client_egress_ms: u64,
+    pub time_at_server_ingress_ms: u64,
+    pub time_at_server_coordinator_ms: u64,
+    pub time_at_server_socket_ms: u64,
+    pub time_client_write_finished_ms: u64,
 }
 
 impl UpStreamMessage {
@@ -66,6 +73,36 @@ impl UpStreamMessage {
 
     pub fn decode_from_bytes(data: &mut Vec<u8>) -> Result<Self, std::io::Error> { // Borsh returns std::io::Error
         Self::try_from_slice(data)
+    }
+
+    pub fn render_latency_information(&self) -> String {
+        let ingress_to_coordinator = self.time_at_coordinator_ms - self.time_ingress_client_ms;
+        let coordinator_to_egress = self.time_at_client_egress_ms - self.time_at_coordinator_ms;
+        let client_egress_server_ingress = self.time_at_server_ingress_ms - self.time_at_client_egress_ms;
+        let server_ingress_to_coordinator = self.time_at_server_coordinator_ms - self.time_at_server_ingress_ms;
+        let coordinator_to_socket = self.time_at_server_socket_ms - self.time_at_server_coordinator_ms;
+        let time_client_write_finished_ms = self.time_client_write_finished_ms - self.time_at_server_socket_ms;
+        let total_time = self.time_client_write_finished_ms - self.time_ingress_client_ms;
+        let msg_size = self.payload.len();
+        let seq_num: u32 = self.message_sequence_number;
+
+        format!("
+            Sequence number: {}
+            ingress_to_coordinator: {}ms
+            coordinator_to_egress: {}ms
+            client_egress_server_ingress: {}ms
+            server_ingress_to_coordinator: {}ms
+            coordinator_to_socket: {}ms
+            socket to socket written: {}ms
+            Total transit time: {}ms for {} bytes",
+            seq_num,
+            ingress_to_coordinator,
+            coordinator_to_egress,
+            client_egress_server_ingress,
+            server_ingress_to_coordinator,
+            coordinator_to_socket,
+            time_client_write_finished_ms,
+            total_time, msg_size)
     }
 }
 
@@ -319,11 +356,9 @@ fn test_server_downstream_meta() {
 #[test]
 fn test_client_upstream_meta() {
     let client_meta = ClientMetaUpstream {
-        bytes_to_send_to_remote: 32423,
-        bytes_to_reply_to_client: 50,
-        messages_to_send_to_remote: 237482,
-        messages_to_reply_to_client: 4283,
-        seq_num: 0,
+        set: None,
+        traffic_stats: ClientMetaUpstreamTrafficStats { socks_to_coordinator_bytes: 0, coordinator_to_request_buffer_bytes: 0, coordinator_to_request_channel_bytes: 0, up_request_in_progress_bytes: 0, response_to_socks_bytes: 0 },
+        packet_info: ClientMetaUpstreamPacketInfo { unix_ms: 0, seq_num: 0 },
     };
 
     let mut buffer = client_meta.encoded().unwrap();
@@ -369,28 +404,11 @@ impl ClientMessageUpstream {
 
 #[test]
 fn test_server_downstream_message() {
-    let mut streams = Vec::new();
-
-    for i in 1..100 {
-        let stream_info = ServerStreamInfo {
-            has_terminated: i % 2 == 0,
-            errors: vec![format!("error {}", i)],
-            logs: vec![format!("log {}", i), format!("another log {}", i)],
-            declaration_token: [i; 16],
-        };
-    
-        streams.push(stream_info);
-    }
-
     let server_meta = ServerMetaDownstream {
-        bytes_to_reply_to_client: 50,
-        bytes_to_send_to_remote: 32423,
-        messages_to_reply_to_client: 4283,
-        messages_to_send_to_remote: 237482,
-        cpu_usage: 4.2,
-        memory_usage_kb: 2091,
-        num_open_sockets: 42,
-        streams,
+        traffic_stats: ServerMetaDownstreamTrafficStats { http_up_to_coordinator_bytes: 0, coordinator_up_to_socket_bytes: 0, socket_down_to_coordinator_bytes: 0, coordinator_down_to_http_message_passer_bytes: 0, coordinator_down_to_http_buffer_bytes: 0, congestion_ctrl_intake_throttle: 0 },
+        server_stats: ServerMetaDownstreamServerStats { cpu_usage: 0.0, memory_usage_kb: 0 },
+        packet_info: ServerMetaDownstreamPacketInfo { unix_ms: 0, seq_num: 0 },
+        logs: Vec::new(),
     };
 
     let mut stream_messages = Vec::new();
@@ -421,10 +439,15 @@ fn test_server_downstream_message() {
 #[test]
 fn test_client_upstream_message() {
     let client_meta = ClientMetaUpstream {
-        bytes_to_send_to_remote: 32423,
-        bytes_to_reply_to_client: 50,
-        messages_to_send_to_remote: 237482,
-        messages_to_reply_to_client: 4283,
+        packet_info: ClientMetaUpstreamPacketInfo { unix_ms: 0, seq_num: 0 },
+        traffic_stats: ClientMetaUpstreamTrafficStats { 
+            socks_to_coordinator_bytes: 0,
+            coordinator_to_request_buffer_bytes: 0,
+            coordinator_to_request_channel_bytes: 0,
+            up_request_in_progress_bytes: 0,
+            response_to_socks_bytes: 0,
+         },
+         set: None,
     };
 
     let mut stream_messages = Vec::new();
