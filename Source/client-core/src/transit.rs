@@ -469,9 +469,8 @@ pub async fn handle_transit(
                         tokio::time::sleep(Duration::from_millis(1)).await;
                         let end_time = Instant::now();
                         let delta = end_time - start_time;
-                        let delta_us = delta.as_micros();
-                        let delta_ms: f32 = delta_us as f32 / 1000.0;
-                        if delta_ms > 10.0 {
+                        let delta_ms = delta.as_millis();
+                        if delta_ms > 10 {
                             eprintln!("Took {}ms to sleep targeted 1ms", delta_ms);
                         }
                     }
@@ -503,12 +502,15 @@ pub async fn handle_transit(
             buffer_close = Vec::new();
             // Reset buffer size
             current_buffer_size = 0;
+
+            // Reset last upstream time
+            last_upstream_time = Instant::now();
         }
 
-        // If we're above mode time and there's more than one piece of data in the buffer
+        // If we're above mode time and we have some - any - data
         if last_upstream_time.elapsed().as_millis() > MODETIME
-            && (buffer_close.len() > 1
-            || buffer_stream.len() > 1)
+            && (buffer_close.len() > 0
+            || buffer_stream.len() > 0)
         {
             // Send the buffer to the push handler
             let multiple_messages = MultipleMessagesUpstream {
@@ -528,15 +530,8 @@ pub async fn handle_transit(
             buffer_stream = Vec::new();
             // Reset buffer size
             current_buffer_size = 0;
-            // Reset last upstream time
-            last_upstream_time = Instant::now();
-        }
 
-        // If we're above mode time and this is the first piece of data, reset the last upstream time
-        if last_upstream_time.elapsed().as_millis() > MODETIME
-            && (buffer_close.len() == 1
-            || buffer_stream.len() == 1)
-        {
+            // Reset last upstream time
             last_upstream_time = Instant::now();
         }
     }
