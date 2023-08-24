@@ -131,6 +131,14 @@ pub struct DownStreamMessage {
     pub message_sequence_number: u32,
     pub has_remote_closed: bool,
     pub payload: Vec<u8>,
+    pub time_at_server_start_recv_ms: u64,
+    pub time_at_server_finish_recv_ms: u64,
+    pub time_at_server_coordinator_ms: u64,
+    pub time_at_server_egress_ms: u64,
+    pub time_at_client_ingress_ms: u64,
+    pub time_at_client_sendon_ms: u64,
+    pub time_at_client_socket_ms: u64,
+    pub time_at_client_socket_write_finished_ms: u64,
 }
 
 impl DownStreamMessage {
@@ -141,6 +149,36 @@ impl DownStreamMessage {
 
     pub fn decode_from_bytes(data: &mut Vec<u8>) -> Result<Self, std::io::Error> { // Borsh returns std::io::Error
         Self::try_from_slice(data)
+    }
+
+    pub fn display_stats(&self) -> String {
+        let time_to_read = self.time_at_server_finish_recv_ms - self.time_at_server_start_recv_ms;
+        let time_at_server_to_coordinator = self.time_at_server_coordinator_ms - self.time_at_server_finish_recv_ms;
+        let time_at_coordinator_to_egress = self.time_at_server_egress_ms - self.time_at_server_coordinator_ms;
+        let time_at_egress_to_client = self.time_at_client_ingress_ms - self.time_at_server_egress_ms;
+        let time_at_client_to_msg_passer: u64 = self.time_at_client_sendon_ms - self.time_at_client_ingress_ms;
+        let time_at_client_to_socket = self.time_at_client_socket_ms - self.time_at_client_sendon_ms;
+        let time_at_socket_to_write = self.time_at_client_socket_write_finished_ms - self.time_at_client_socket_ms;
+        let total_time = self.time_at_client_socket_write_finished_ms - self.time_at_server_start_recv_ms;
+        let msg_size = self.payload.len();
+
+        format!("
+            Time to read: {}ms
+            Time at to send to coordinator: {}ms
+            Time at coordinator to send to egress: {}ms
+            Time at egress to send to client: {}ms
+            Time at client to send to msg passer: {}ms
+            Time at msg passer to write to socket: {}ms
+            Time spent writing to socket: {}ms
+            Total transit time: {}ms for {} bytes",
+            time_to_read,
+            time_at_server_to_coordinator,
+            time_at_coordinator_to_egress,
+            time_at_egress_to_client,
+            time_at_client_to_msg_passer,
+            time_at_client_to_socket,
+            time_at_socket_to_write,
+            total_time, msg_size)
     }
 }
 

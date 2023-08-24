@@ -151,7 +151,7 @@ async fn downstream_data(
         };
 
     // Don't send on - just get
-    let downstream_messages = {
+    let mut downstream_messages = {
         let return_messages = actor.from_bundler_stream.recv_async().await;
 
         match return_messages {
@@ -163,6 +163,12 @@ async fn downstream_data(
             }
         }
     };
+
+    // Set egress time on each message
+    let egress_time = meta::ms_since_epoch();
+    for message in downstream_messages.iter_mut() {
+        message.time_at_server_egress_ms = egress_time;
+    }
 
     // Modify traffic stats
     let return_msgs_bytes = downstream_messages
