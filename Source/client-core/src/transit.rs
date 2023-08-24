@@ -341,7 +341,11 @@ async fn pull_handler(
         // TODO use the metadata to determine whether to kill the connection, as well as congestion control et cetera
         // for now just send the data to the appropriate socket
 
-        for downstream_message in decoded.messages {
+        let ingress_time = ms_since_epoch();
+
+        for mut downstream_message in decoded.messages {
+            downstream_message.time_at_client_ingress_ms = ingress_time;
+
             if downstream_message.has_remote_closed {
                 // TODO handle this by removing from the lookup
             }
@@ -358,6 +362,7 @@ async fn pull_handler(
                     CLIENT_META_UPSTREAM.response_to_socks_bytes.fetch_add(size, Ordering::SeqCst);
 
                     // Send the message
+                    downstream_message.time_at_client_sendon_ms = ms_since_epoch();
                     sender.send(downstream_message).unwrap();
                 }
                 None => {
@@ -376,6 +381,7 @@ async fn pull_handler(
                     CLIENT_META_UPSTREAM.response_to_socks_bytes.fetch_add(size, Ordering::SeqCst);
 
                     // Send the message
+                    downstream_message.time_at_client_sendon_ms = ms_since_epoch();
                     sender.send(downstream_message).unwrap();
                 }
             }

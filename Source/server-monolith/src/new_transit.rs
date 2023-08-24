@@ -79,8 +79,18 @@ pub async fn handle_session(
     let mut last_return_time: Instant = Instant::now();
     let mut buffer_size = 0;
     let mut buffer: Vec<DownStreamMessage> = Vec::with_capacity(1024);
+    let mut last_iteration_time: Instant = Instant::now();
 
     loop {
+        // Check how long the loop took
+        let loop_time = last_iteration_time.elapsed();
+        let loop_time_ms = loop_time.as_millis();
+        if loop_time_ms > 5 {
+            // TODO handle this better
+            println!("Loop took {}ms", loop_time_ms);
+        }
+        last_iteration_time = Instant::now();
+
         let mut no_received_http = true;
         let mut no_received_tcp = false;
 
@@ -92,7 +102,7 @@ pub async fn handle_session(
                 .and_modify(|tcp_handler| {
                     // Try to receive from the TCP handler
                     match tcp_handler.try_recv() {
-                        Ok(message) => {
+                        Ok(mut message) => {
                             // Add to the buffer
                             let payload_length = message.payload.len();
                             buffer_size += payload_length; 
@@ -101,6 +111,9 @@ pub async fn handle_session(
 
                             traffic_stats.coordinator_down_to_http_buffer_bytes.fetch_add(payload_length_u32, Ordering::Relaxed);
                             traffic_stats.socket_down_to_coordinator_bytes.fetch_sub(payload_length_u32, Ordering::Relaxed);
+
+                            // Set time
+                            message.time_at_server_coordinator_ms = meta::ms_since_epoch();
 
                             buffer.push(message);
                             no_received_http = false;
@@ -133,7 +146,7 @@ pub async fn handle_session(
             last_return_time = Instant::now();
         }
 
-        // Check if it exceeds modetime, but there's nothing in the buffer
+        // Check if it exceeds modetime
         if last_return_time.elapsed() > Duration::from_millis(10) {
             if buffer_size > 0 {
                 dprintln!("Sending buffer back due to modetime!");
@@ -253,6 +266,14 @@ pub async fn handle_tcp(
                 message_sequence_number: return_sequence_number,
                 payload: Vec::with_capacity(0),
                 has_remote_closed: false,
+                time_at_server_start_recv_ms: meta::ms_since_epoch(),
+                time_at_server_finish_recv_ms: 0,
+                time_at_server_coordinator_ms: 0,
+                time_at_server_egress_ms: 0,
+                time_at_client_ingress_ms: 0,
+                time_at_client_sendon_ms: 0,
+                time_at_client_socket_ms: 0,
+                time_at_client_socket_write_finished_ms: 0,
             };
 
             // Write in directly for efficiency
@@ -280,6 +301,9 @@ pub async fn handle_tcp(
             // Send the message
             dprintln!("Sending message sequence number {} to HTTP stream (socket ID {})", downstream_msg.message_sequence_number, downstream_msg.socket_id);
             let payload_size = downstream_msg.payload.len() as u32;
+
+            // Set finish recv time
+            downstream_msg.time_at_server_finish_recv_ms = meta::ms_since_epoch();
 
             to_http_stream.send(downstream_msg).unwrap();
 

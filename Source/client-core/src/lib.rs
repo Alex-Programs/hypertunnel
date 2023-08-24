@@ -214,12 +214,14 @@ async fn tcp_listener(stream: TcpStream, upstream_passer_send: Sender<UpStreamMe
             // Check if transit has sent us any data
             dprintln!("Checking if we can send data as reported writeable");
             match downstream_passer_receive.try_recv() {
-                Ok(data) => {
+                Ok(mut data) => {
                     dprintln!("Sending data to client as reported writeable and have gotten data");
+
+                    data.time_at_client_socket_ms = meta::ms_since_epoch();
 
                     // Transit has sent us data
                     // Send it to the client
-                    let bytes = data.payload;
+                    let bytes = &data.payload;
                     let length = bytes.len();
 
                     // Decrement counter
@@ -227,7 +229,7 @@ async fn tcp_listener(stream: TcpStream, upstream_passer_send: Sender<UpStreamMe
 
                     is_writeable = true;
 
-                    match stream.try_write(&bytes) {
+                    match stream.try_write(bytes) {
                         Ok(_) => {
                             // All is fine
                             dprintln!("Sent {} bytes to client", length);
@@ -238,6 +240,9 @@ async fn tcp_listener(stream: TcpStream, upstream_passer_send: Sender<UpStreamMe
                             continue
                         }
                     }
+
+                    data.time_at_client_socket_write_finished_ms = meta::ms_since_epoch();
+                    println!("Downstram timing data: {}", data.display_stats());
                 },
                 Err(error) => {
                     dprintln!("Wanted to send data to client as reported writeable but failed to receive data from transit: {:?}", error);
