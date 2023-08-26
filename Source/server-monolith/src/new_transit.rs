@@ -1,4 +1,3 @@
-use dashmap::DashMap;
 use libtransit::{
     ClientMetaUpstream, DownStreamMessage, ServerMetaDownstream, SocketID, UpStreamMessage, DeclarationToken,
 };
@@ -7,7 +6,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use flume;
 
-use tokio::io::{Interest, AsyncWriteExt};
+use tokio::io::{Interest, AsyncWriteExt, AsyncReadExt};
 use tokio::net::TcpStream;
 
 use libsecrets::EncryptionKey;
@@ -230,28 +229,69 @@ pub async fn handle_session(
     }
 }
 
-pub async fn handle_tcp(
+async fn handle_tcp_up(
     mut from_http_stream: mpsc::UnboundedReceiver<UpStreamMessage>,
-    to_http_stream: mpsc::UnboundedSender<DownStreamMessage>,
-    ip: u32,
-    port: u16,
-    socket_id: SocketID,
+    to_http_stream: mpsc::UnboundedSender<DownStreamMessage>, // For sending socket close messages
+    mut tcp_write_half: tokio::net::tcp::OwnedWriteHalf,
     traffic_stats: Arc<meta::ServerMetaDownstreamTrafficStatsSynced>,
+    socket_id: SocketID,
 ) {
-    let stream = TcpStream::connect(format!("{}:{}", ip, port)).await;
-    let mut stream = match stream {
-        Ok(stream) => stream,
-        Err(e) => {
-            // TODO handle this better
-            panic!("Error connecting to TCP server: {:?}", e);
-        }
-    };
-
     let mut return_sequence_number = 0;
     let mut last_sent_seq_number_sanity: i64 = -1;
 
     loop {
-        let ready = stream.ready(Interest::READABLE | Interest::WRITABLE).await;
+        let ready = tcp_write_half.ready(Interest::WRITABLE).await;
+
+        if ready.is_err() {
+            // TODO handle this better
+            panic!("Error getting ready state: {:?}", ready);
+        }
+
+        let ready = ready.unwrap();
+
+        if ready.is_writable() {
+            // We're using an asynchronous wait here to avoid the old hot-loop system
+            let mut message = match from_http_stream.recv().await {
+                Some(message) => message,
+                None => {
+                    // TODO handle this better
+                    panic!("Error receiving from HTTP stream: {:?}", from_http_stream);
+                }
+            };
+
+            message.time_at_server_socket_ms = meta::ms_since_epoch();
+
+            let seq_num = message.message_sequence_number;
+
+            debug_assert_eq!(last_sent_seq_number_sanity + 1, seq_num as i64);
+
+            last_sent_seq_number_sanity = seq_num as i64;
+
+            let payload_size = message.payload.len() as u32;
+            traffic_stats.coordinator_up_to_socket_bytes.fetch_sub(payload_size, Ordering::Relaxed);
+            
+            // Write payload
+            tcp_write_half.write_all(&message.payload).await.unwrap();
+
+            message.time_client_write_finished_ms = meta::ms_since_epoch();
+
+            dprintln!("Written to the stream");
+
+            println!("Message timing info: {}", message.render_latency_information());
+        }
+    }
+}
+
+async fn handle_tcp_down(
+    mut to_http_stream: mpsc::UnboundedSender<DownStreamMessage>,
+    mut tcp_read_half: tokio::net::tcp::OwnedReadHalf,
+    socket_id: SocketID,
+    traffic_stats: Arc<meta::ServerMetaDownstreamTrafficStatsSynced>,
+) {
+    let mut return_sequence_number = 0;
+
+    loop {
+        let ready = tcp_read_half.ready(Interest::READABLE).await;
 
         if ready.is_err() {
             // TODO handle this better
@@ -264,7 +304,7 @@ pub async fn handle_tcp(
             let mut downstream_msg = DownStreamMessage {
                 socket_id,
                 message_sequence_number: return_sequence_number,
-                payload: Vec::with_capacity(0),
+                payload: vec![0; 512], // TODO make this configurable
                 has_remote_closed: false,
                 time_at_server_start_recv_ms: meta::ms_since_epoch(),
                 time_at_server_finish_recv_ms: 0,
@@ -277,26 +317,25 @@ pub async fn handle_tcp(
             };
 
             // Write in directly for efficiency
-            let bytes_read = match stream.try_read_buf(&mut downstream_msg.payload) {
+            // We're using an asynchronous wait here to avoid the old hot-loop system
+            let bytes_read = match tcp_read_half.read(&mut downstream_msg.payload).await {
                 Ok(bytes_read) => bytes_read,
                 Err(e) => {
-                    // TODO handle this better
-                    // Check if it's because it's blocking
-                    if e.kind() == std::io::ErrorKind::WouldBlock {
-                        // Wait a moment
-                        tokio::time::sleep(Duration::from_millis(1)).await;
-
-                        continue;
-                    } else {
-                        panic!("Error reading from TCP stream: {:?}", e);
-                    }
+                    panic!("Error reading from TCP stream: {:?}", e);
                 }
             };
 
+            println!("Read {} bytes", bytes_read);
+
             if bytes_read == 0 {
-                // Remote has closed
-                // TODO handle this properly
+                // TODO handle socket close
+                return;
             }
+
+            // Trim array down to size
+            downstream_msg.payload.truncate(bytes_read);
+
+            println!("Payload: {:?}", downstream_msg.payload);
 
             // Send the message
             dprintln!("Sending message sequence number {} to HTTP stream (socket ID {})", downstream_msg.message_sequence_number, downstream_msg.socket_id);
@@ -312,42 +351,31 @@ pub async fn handle_tcp(
             // Increment the return sequence number
             return_sequence_number += 1;
         }
-
-        if ready.is_writable() {
-            let mut message = match from_http_stream.try_recv() {
-                Ok(message) => message,
-                Err(e) => {
-                    // Check if the channel is empty
-                    if e == mpsc::error::TryRecvError::Empty {
-                        // Wait a moment
-                        tokio::time::sleep(Duration::from_millis(1)).await;
-
-                        continue;
-                    } else {
-                        // Panic
-                        panic!("Error receiving from HTTP stream: {:?}", e);
-                    }
-                }
-            };
-            message.time_at_server_socket_ms = meta::ms_since_epoch();
-
-            let seq_num = message.message_sequence_number;
-
-            debug_assert_eq!(last_sent_seq_number_sanity + 1, seq_num as i64);
-
-            last_sent_seq_number_sanity = seq_num as i64;
-
-            let payload_size = message.payload.len() as u32;
-            traffic_stats.coordinator_up_to_socket_bytes.fetch_sub(payload_size, Ordering::Relaxed);
-            
-            // Write payload
-            stream.write_all(&message.payload).await.unwrap();
-
-            message.time_client_write_finished_ms = meta::ms_since_epoch();
-
-            dprintln!("Written to the stream");
-
-            println!("Message timing info: {}", message.render_latency_information());
-        }
     }
+}
+
+pub async fn handle_tcp(
+    from_http_stream: mpsc::UnboundedReceiver<UpStreamMessage>,
+    to_http_stream: mpsc::UnboundedSender<DownStreamMessage>,
+    ip: u32,
+    port: u16,
+    socket_id: SocketID,
+    traffic_stats: Arc<meta::ServerMetaDownstreamTrafficStatsSynced>,
+) {
+    let stream = TcpStream::connect(format!("{}:{}", ip, port)).await;
+    let stream = match stream {
+        Ok(stream) => stream,
+        Err(e) => {
+            // TODO handle this better
+            panic!("Error connecting to TCP server: {:?}", e);
+        }
+    };
+
+    // Split the stream
+    let (tcp_read_half, tcp_write_half) = stream.into_split();
+
+    // Spawn the TCP handlers
+    tokio::spawn(handle_tcp_up(from_http_stream, to_http_stream.clone(), tcp_write_half, traffic_stats.clone(), socket_id));
+
+    tokio::spawn(handle_tcp_down(to_http_stream, tcp_read_half, socket_id, traffic_stats.clone()));
 }
