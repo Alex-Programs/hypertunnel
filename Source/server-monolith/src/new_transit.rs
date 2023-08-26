@@ -325,8 +325,6 @@ async fn handle_tcp_down(
                 }
             };
 
-            println!("Read {} bytes", bytes_read);
-
             if bytes_read == 0 {
                 // TODO handle socket close
                 return;
@@ -334,8 +332,6 @@ async fn handle_tcp_down(
 
             // Trim array down to size
             downstream_msg.payload.truncate(bytes_read);
-
-            println!("Payload: {:?}", downstream_msg.payload);
 
             // Send the message
             dprintln!("Sending message sequence number {} to HTTP stream (socket ID {})", downstream_msg.message_sequence_number, downstream_msg.socket_id);

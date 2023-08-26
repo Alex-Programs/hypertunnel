@@ -1,5 +1,5 @@
 use libsocks;
-use libtransit::{UpStreamMessage, CloseSocketMessage};
+use libtransit::{UpStreamMessage, CloseSocketMessage, SocketID};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedReceiver, UnboundedSender};
 use tokio::sync::mpsc::error::TryRecvError;
@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use tokio::task;
 use tokio::sync::broadcast::{self, Sender as BroadcastSender, Receiver as BroadcastReceiver};
 use std::sync::Arc;
-use tokio::io::Interest;
+use tokio::io::{Interest, AsyncWriteExt, AsyncReadExt};
 use tokio::sync::RwLock;
 
 mod transit_builder;
@@ -202,34 +202,37 @@ async fn tcp_listener(stream: TcpStream, upstream_passer_send: Sender<UpStreamMe
 
     message_passer_passer_send.send(message).expect("Failed to send message passer to transit");
 
-    let mut send_seq_num = 0;
+    let (mut read_half, mut write_half) = stream.into_split();
+
+    // Spawn both tasks
+    task::spawn(tcp_handler_up(read_half, socket_id, dstip, dstport, upstream_passer_send.clone()));
+    task::spawn(tcp_handler_down(write_half, downstream_passer_receive));
+}
+
+async fn tcp_handler_down(write_half: tokio::net::tcp::OwnedWriteHalf,
+    mut downstream_passer_receive: UnboundedReceiver<libtransit::DownStreamMessage>,
+) {
+    let mut sanity_seq_num = 0;
 
     loop {
-        let mut is_writeable = false;
-        let mut is_readable = false;
-
-        let ready = stream.ready(Interest::READABLE | Interest::WRITABLE).await.expect("Failed to wait for socket to be ready");
+        let ready = write_half.ready(Interest::WRITABLE).await.expect("Failed to wait for socket to be ready");
 
         if ready.is_writable() {
-            // Check if transit has sent us any data
-            dprintln!("Checking if we can send data as reported writeable");
-            match downstream_passer_receive.try_recv() {
-                Ok(mut data) => {
-                    dprintln!("Sending data to client as reported writeable and have gotten data");
-
-                    data.time_at_client_socket_ms = meta::ms_since_epoch();
-
+            match downstream_passer_receive.recv().await {
+                Some(mut data) => {
                     // Transit has sent us data
                     // Send it to the client
                     let bytes = &data.payload;
                     let length = bytes.len();
 
+                    data.time_at_client_socket_ms = meta::ms_since_epoch();
+
+                    assert_eq!(sanity_seq_num, data.message_sequence_number, "Sequence number mismatch");
+
                     // Decrement counter
                     CLIENT_META_UPSTREAM.response_to_socks_bytes.fetch_sub(length as u32, Ordering::SeqCst);
 
-                    is_writeable = true;
-
-                    match stream.try_write(bytes) {
+                    match write_half.try_write(bytes) {
                         Ok(_) => {
                             // All is fine
                             dprintln!("Sent {} bytes to client", length);
@@ -242,43 +245,40 @@ async fn tcp_listener(stream: TcpStream, upstream_passer_send: Sender<UpStreamMe
                     }
 
                     data.time_at_client_socket_write_finished_ms = meta::ms_since_epoch();
-                    println!("Downstram timing data: {}", data.display_stats());
+                    println!("Downstream timing data: {}", data.display_stats());
+
+                    sanity_seq_num += 1;
                 },
-                Err(error) => {
-                    dprintln!("Wanted to send data to client as reported writeable but failed to receive data from transit: {:?}", error);
-                    match error {
-                        TryRecvError::Empty => {
-                            // No data from transit
-                            // Wait a moment because async
-                            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-                            // DO NOT continue, we still need to read
-                        },
-                        TryRecvError::Disconnected => {
-                            // Transit has disconnected
-                            // TODO handle properly
-                            eprintln!("Transit has disconnected; socket cannot be sustained");
-                            return
-                        }
-                        _ => {
-                            // TODO handle properly
-                            eprintln!("Failed to receive data from transit: {:?}", error);
-                            continue
-                        }
-                    };
+                None => {
+                    // Transit has disconnected
+                    // TODO handle properly
+                    eprintln!("Transit has disconnected; socket cannot be sustained");
+                    return
                 }
-            };
-        } else {
-            dprintln!("Not checking if we can send data as not reported writeable")
+            }
         }
+    }
+}
+
+async fn tcp_handler_up(mut read_half: tokio::net::tcp::OwnedReadHalf,
+    socket_id: SocketID,
+    dest_ip: libsocks::IPV4,
+    dest_port: libsocks::Port,
+    upstream_passer_send: Sender<UpStreamMessage>,
+) {
+    let mut msg_seq_num = 0;
+
+    loop {
+        let ready = read_half.ready(Interest::READABLE).await.expect("Failed to wait for socket to be ready");
 
         if ready.is_readable() {
-            let mut upstream_packet = UpStreamMessage {
+            let mut upstream_msg = UpStreamMessage {
                 socket_id,
-                message_sequence_number: send_seq_num,
-                dest_ip: dstip,
-                dest_port: dstport,
-                payload: Vec::with_capacity(0),
-                time_ingress_client_ms: meta::ms_since_epoch(),
+                message_sequence_number: msg_seq_num,
+                dest_ip,
+                dest_port,
+                payload: vec![0; 512], // TODO changeable
+                time_ingress_client_ms: 0,
                 time_at_coordinator_ms: 0,
                 time_at_client_egress_ms: 0,
                 time_at_server_ingress_ms: 0,
@@ -287,37 +287,31 @@ async fn tcp_listener(stream: TcpStream, upstream_passer_send: Sender<UpStreamMe
                 time_client_write_finished_ms: 0,
             };
 
-            // Read into the payload buffer
-            let bytes_read = match stream.try_read_buf(&mut upstream_packet.payload) {
+            let bytes_read = match read_half.read(&mut upstream_msg.payload).await {
                 Ok(bytes_read) => bytes_read,
                 Err(error) => {
                     // TODO handle properly
-                    eprintln!("Failed to read from socket: {:?}", error);
-                    continue
+                    panic!("Failed to read from socket: {:?}", error);
                 }
             };
 
-            is_readable = true;
-
-            // Check if the socket was closed
             if bytes_read == 0 {
                 // The socket was closed
                 // TODO handle properly
                 return
             }
 
-            dprintln!("Read {} bytes from socket", bytes_read);
+            // Set time
+            upstream_msg.time_ingress_client_ms = meta::ms_since_epoch();
+
+            // Trim array to actual size
+            upstream_msg.payload.truncate(bytes_read);
 
             // Send the data to transit
             CLIENT_META_UPSTREAM.socks_to_coordinator_bytes.fetch_add(bytes_read as u32, Ordering::Relaxed);
-            upstream_passer_send.send(upstream_packet).await.expect("Failed to send data to transit");
+            upstream_passer_send.send(upstream_msg).await.expect("Failed to send data to transit");
 
-            send_seq_num += 1;
-        }
-
-        if !is_readable && !is_writeable {
-            // Wait a moment because async
-            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            msg_seq_num += 1;
         }
     }
 }
