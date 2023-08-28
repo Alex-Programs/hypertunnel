@@ -563,6 +563,7 @@ dependencies = [
  "libsecrets",
  "libsocks",
  "libtransit",
+ "once_cell",
  "rand",
  "reqwest",
  "tokio",
