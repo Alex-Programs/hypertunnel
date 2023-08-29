@@ -1,5 +1,5 @@
 use libsocks;
-use libtransit::{UpStreamMessage, CloseSocketMessage, SocketID};
+use libtransit::{UpStreamMessage, SocketID, SocksSocketDownstream};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedReceiver, UnboundedSender};
 use tokio::sync::mpsc::error::TryRecvError;
@@ -35,8 +35,6 @@ pub async fn begin_core_client(arguments: ClientArguments) {
         Sender<UpStreamMessage>,
         Receiver<UpStreamMessage>,
     ) = mpsc::channel(10_000);
-
-    let (close_passer_send, close_passer_receive): (Sender<CloseSocketMessage>, Receiver<CloseSocketMessage>) = mpsc::channel(10_000);
 
     let (message_passer_passer_send, _): (BroadcastSender<transit::DownstreamBackpasser>, BroadcastReceiver<transit::DownstreamBackpasser>) = broadcast::channel(100_000);
     
@@ -75,15 +73,15 @@ pub async fn begin_core_client(arguments: ClientArguments) {
             let (socket, _) = listener.accept().await.expect("Failed to accept connection");
 
             // Spawn a task to handle the connection
-            task::spawn(tcp_listener(socket, upstream_passer_send.clone(), close_passer_send.clone(), moved_passer_passer.clone()));
+            task::spawn(tcp_listener(socket, upstream_passer_send.clone(), moved_passer_passer.clone()));
         }
     });
 
-    transit::handle_transit(transit_socket, upstream_passer_receive, close_passer_receive, message_passer_passer_send.clone()).await;
+    transit::handle_transit(transit_socket, upstream_passer_receive, message_passer_passer_send.clone()).await;
 }
 
 #[allow(unused)]
-async fn tcp_listener(mut stream: TcpStream, upstream_passer_send: Sender<UpStreamMessage>, close_passer_send: Sender<CloseSocketMessage>, message_passer_passer_send: Arc<BroadcastSender<transit::DownstreamBackpasser>>) {
+async fn tcp_listener(mut stream: TcpStream, upstream_passer_send: Sender<UpStreamMessage>, message_passer_passer_send: Arc<BroadcastSender<transit::DownstreamBackpasser>>) {
     const MAX_SOCKS_REQUEST_LENGTH: usize = 4096;
 
     // Read the first packet
@@ -206,7 +204,7 @@ async fn tcp_listener(mut stream: TcpStream, upstream_passer_send: Sender<UpStre
     let socket_id = allocate_socket_id();
 
     // Now we need to let transit know how to reply to this socket. First we create a message passer
-    let (downstream_passer_send, mut downstream_passer_receive): (UnboundedSender<libtransit::DownStreamMessage>, UnboundedReceiver<libtransit::DownStreamMessage>) = mpsc::unbounded_channel();
+    let (downstream_passer_send, mut downstream_passer_receive): (UnboundedSender<SocksSocketDownstream>, UnboundedReceiver<SocksSocketDownstream>) = mpsc::unbounded_channel();
 
     // Now we send the message passer to transit
     let message = transit::DownstreamBackpasser {
@@ -224,24 +222,18 @@ async fn tcp_listener(mut stream: TcpStream, upstream_passer_send: Sender<UpStre
 }
 
 async fn tcp_handler_down(write_half: tokio::net::tcp::OwnedWriteHalf,
-    mut downstream_passer_receive: UnboundedReceiver<libtransit::DownStreamMessage>,
+    mut downstream_passer_receive: UnboundedReceiver<SocksSocketDownstream>,
 ) {
-    let mut sanity_seq_num = 0;
-
     loop {
         let ready = write_half.ready(Interest::WRITABLE).await.expect("Failed to wait for socket to be ready");
 
         if ready.is_writable() {
             match downstream_passer_receive.recv().await {
-                Some(mut data) => {
+                Some(data) => {
                     // Transit has sent us data
                     // Send it to the client
                     let bytes = &data.payload;
                     let length = bytes.len();
-
-                    data.time_at_client_socket_ms = meta::ms_since_epoch();
-
-                    assert_eq!(sanity_seq_num, data.message_sequence_number, "Sequence number mismatch");
 
                     // Decrement counter
                     CLIENT_META_UPSTREAM.response_to_socks_bytes.fetch_sub(length as u32, Ordering::SeqCst);
@@ -258,10 +250,7 @@ async fn tcp_handler_down(write_half: tokio::net::tcp::OwnedWriteHalf,
                         }
                     }
 
-                    data.time_at_client_socket_write_finished_ms = meta::ms_since_epoch();
-                    println!("Downstream timing data: {}", data.display_stats());
-
-                    sanity_seq_num += 1;
+                    // TODO properly handle termination reasons
                 },
                 None => {
                     // Transit has disconnected
@@ -288,17 +277,9 @@ async fn tcp_handler_up(mut read_half: tokio::net::tcp::OwnedReadHalf,
         if ready.is_readable() {
             let mut upstream_msg = UpStreamMessage {
                 socket_id,
-                message_sequence_number: msg_seq_num,
                 dest_ip,
                 dest_port,
                 payload: vec![0; 512], // TODO changeable
-                time_ingress_client_ms: 0,
-                time_at_coordinator_ms: 0,
-                time_at_client_egress_ms: 0,
-                time_at_server_ingress_ms: 0,
-                time_at_server_coordinator_ms: 0,
-                time_at_server_socket_ms: 0,
-                time_client_write_finished_ms: 0,
             };
 
             let bytes_read = match read_half.read(&mut upstream_msg.payload).await {
@@ -314,9 +295,6 @@ async fn tcp_handler_up(mut read_half: tokio::net::tcp::OwnedReadHalf,
                 // TODO handle properly
                 return
             }
-
-            // Set time
-            upstream_msg.time_ingress_client_ms = meta::ms_since_epoch();
 
             // Trim array to actual size
             upstream_msg.payload.truncate(bytes_read);
