@@ -179,6 +179,7 @@ fn test_client_upstream() {
 pub struct ServerMessageDownstream {
     pub metadata: ServerMetaDownstream,
     pub socks_sockets: Vec<SocksSocketDownstream>,
+    pub payload_size: u32,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
