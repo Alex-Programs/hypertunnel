@@ -87,6 +87,7 @@ fn test_downstream_msg() {
 pub struct ClientMessageUpstream {
     pub metadata: ClientMetaUpstream,
     pub socks_sockets: Vec<SocksSocketUpstream>,
+    pub payload_size: u32,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
@@ -167,6 +168,7 @@ fn test_client_upstream() {
             payload: vec![0, 1, 2, 3],
             termination_reason: vec![UpStreamTerminationReason::SocketClosed],
         }],
+        payload_size: 4,
     };
     let encoded = msg.encoded().unwrap();
     let decoded = ClientMessageUpstream::decode_from_bytes(&mut encoded.clone()).unwrap();
@@ -176,7 +178,7 @@ fn test_client_upstream() {
 #[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug)]
 pub struct ServerMessageDownstream {
     pub metadata: ServerMetaDownstream,
-    pub messages: Vec<DownStreamMessage>,
+    pub socks_sockets: Vec<SocksSocketDownstream>,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
@@ -210,6 +212,7 @@ pub struct ServerMetaDownstreamLog {
     message: String,
 }
 
+#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
 pub struct SocksSocketDownstream {
     pub socket_id: SocketID,
     pub dest_ip: IPV4,
@@ -269,9 +272,12 @@ fn test_server_message_downstream() {
                 message: "test".to_string(),
             }],
         },
-        messages: vec![DownStreamMessage {
+        socks_sockets: vec![SocksSocketDownstream {
             socket_id: 0,
+            dest_ip: 0,
+            dest_port: 0,
             payload: vec![0, 1, 2, 3],
+            termination_reasons: vec![DownStreamTerminationReason::SocketClosed],
         }],
     };
     let encoded = msg.encoded().unwrap();

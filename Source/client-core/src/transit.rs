@@ -1,6 +1,6 @@
 use flume::{self, Receiver as FlumeReceiver, Sender as FlumeSender};
 use libsecrets::{self, EncryptionKey};
-use libtransit::{self, CloseSocketMessage, MultipleMessagesUpstream, ClientMetaUpstreamPacketInfo, ClientMetaUpstreamTrafficStats};
+use libtransit::{self, UnifiedPacketInfo, SocksSocketUpstream, SocksSocketDownstream};
 use libtransit::{
     ClientMessageUpstream, ClientMetaUpstream, DeclarationToken, DownStreamMessage,
     ServerMessageDownstream, ServerMetaDownstream, SocketID, UpStreamMessage,
@@ -62,7 +62,7 @@ impl From<libsecrets::EncryptionError> for TransitInitError {
 #[derive(Clone, Debug)]
 pub struct DownstreamBackpasser {
     pub socket_id: libtransit::SocketID,
-    pub sender: UnboundedSender<DownStreamMessage>,
+    pub sender: UnboundedSender<SocksSocketDownstream>,
 }
 
 pub async fn connect(transit_socket: Arc<RwLock<TransitSocket>>) -> Result<(), TransitInitError> {
@@ -161,7 +161,7 @@ async fn greet_server(transit_socket: Arc<RwLock<TransitSocket>>) -> Result<(), 
 
 async fn push_handler(
     transit_socket: Arc<RwLock<TransitSocket>>,
-    to_send_passer: FlumeReceiver<MultipleMessagesUpstream>,
+    to_send_passer: FlumeReceiver<Vec<SocksSocketUpstream>>,
 ) {
     // Create client
     let client = Client::new();
@@ -184,7 +184,7 @@ async fn push_handler(
         // Get the data to send
         let to_send = to_send_passer.recv_async().await;
 
-        let mut to_send = match to_send {
+        let to_send = match to_send {
             Ok(to_send) => to_send,
             Err(_) => {
                 // TODO handle this
@@ -193,11 +193,8 @@ async fn push_handler(
             }
         };
 
-        let time_at_client_egress = ms_since_epoch();
-
         // Get the size of the multiple messages
-        let mut payload_size: u32 = to_send.stream_messages.iter().map(|x| x.payload.len() as u32).sum();
-        payload_size += (to_send.close_socket_messages.len() * 512) as u32;
+        let payload_size = to_send.iter().map(|x| x.payload.len() as u32).sum::<u32>();
 
         // Decrement the counter
         CLIENT_META_UPSTREAM.coordinator_to_request_channel_bytes.fetch_sub(payload_size, Ordering::Relaxed);
@@ -208,14 +205,10 @@ async fn push_handler(
         // Send the data
         // Encode and encrypt in a thread
         let to_send = tokio::task::spawn_blocking(move || {
-            // Go through to_send and add information for when they arrived at client egress
-            for stream_message in to_send.stream_messages.iter_mut() {
-                stream_message.time_at_client_egress_ms = time_at_client_egress;
-            }
-
             let upstream_message = ClientMessageUpstream {
-                messages: to_send,
+                socks_sockets: to_send,
                 metadata: get_metadata(SENT_SEQ_NUM.fetch_add(1, Ordering::SeqCst)),
+                payload_size,
             };
 
             let data_bin = upstream_message.encoded().unwrap();
@@ -247,7 +240,7 @@ async fn push_handler(
 
 fn get_metadata(seq_num: u32) -> ClientMetaUpstream {
     let data = ClientMetaUpstream {
-        packet_info: ClientMetaUpstreamPacketInfo {
+        packet_info: UnifiedPacketInfo {
             unix_ms: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -268,7 +261,7 @@ async fn pull_handler(
     mut message_passer_passer: BroadcastReceiver<DownstreamBackpasser>,
 ) {
     // This will hold the return lookup and be populated by the messagePasserPassers
-    let mut return_lookup: HashMap<SocketID, UnboundedSender<DownStreamMessage>> = HashMap::new();
+    let mut return_lookup: HashMap<SocketID, UnboundedSender<SocksSocketDownstream>> = HashMap::new();
 
     // Create client
     let client = Client::new();
@@ -289,11 +282,9 @@ async fn pull_handler(
         // Could be made spawn_blocking if this turns out to take too long
         let to_send = {
             let upstream_message = ClientMessageUpstream {
-                messages: MultipleMessagesUpstream {
-                    stream_messages: Vec::with_capacity(0),
-                    close_socket_messages: Vec::with_capacity(0),
-                },
+                socks_sockets: Vec::with_capacity(0),
                 metadata: get_metadata(0),
+                payload_size: 0,
             };
 
             let data_bin = upstream_message.encoded().unwrap();
@@ -302,8 +293,6 @@ async fn pull_handler(
 
             encrypted
         };
-
-        let send_time = Instant::now();
 
         // Send the data
         let response = client
@@ -338,32 +327,20 @@ async fn pull_handler(
         // Set the seq_num to the next one
         RECEIVED_SEQ_NUM.fetch_add(1, Ordering::SeqCst);
 
-        // TODO use the metadata to determine whether to kill the connection, as well as congestion control et cetera
-        // for now just send the data to the appropriate socket
-
-        let ingress_time = ms_since_epoch();
-
-        for mut downstream_message in decoded.messages {
-            downstream_message.time_at_client_ingress_ms = ingress_time;
-
-            if downstream_message.has_remote_closed {
-                // TODO handle this by removing from the lookup
-            }
-
-            let socket_id = downstream_message.socket_id;
+        for mut socket in decoded.socks_sockets {
+            let socket_id = socket.socket_id;
 
             // Get the sender
             let sender = return_lookup.get(&socket_id);
 
             match sender {
                 Some(sender) => {
-                    let size = downstream_message.payload.len() as u32;
+                    let size = socket.payload.len() as u32;
                     // Increment the counter
                     CLIENT_META_UPSTREAM.response_to_socks_bytes.fetch_add(size, Ordering::SeqCst);
 
                     // Send the message
-                    downstream_message.time_at_client_sendon_ms = ms_since_epoch();
-                    sender.send(downstream_message).unwrap();
+                    sender.send(socket).unwrap();
                 }
                 None => {
                     // Populate the sender via iteration through the messagePasserPasser
@@ -377,12 +354,11 @@ async fn pull_handler(
                     let sender = return_lookup.get(&socket_id).unwrap();
 
                     // Increment the counter
-                    let size = downstream_message.payload.len() as u32;
+                    let size = socket.payload.len() as u32;
                     CLIENT_META_UPSTREAM.response_to_socks_bytes.fetch_add(size, Ordering::SeqCst);
 
                     // Send the message
-                    downstream_message.time_at_client_sendon_ms = ms_since_epoch();
-                    sender.send(downstream_message).unwrap();
+                    sender.send(socket).unwrap();
                 }
             }
         }
@@ -395,7 +371,6 @@ async fn pull_handler(
 pub async fn handle_transit(
     transit_socket: Arc<RwLock<TransitSocket>>,
     mut upstream_passer_rcv: Receiver<UpStreamMessage>,
-    mut close_passer_rcv: Receiver<CloseSocketMessage>,
     message_passer_passer_send: Arc<BroadcastSender<DownstreamBackpasser>>,
 ) {
     // Spawn requisite push and pull handlers
@@ -403,7 +378,7 @@ pub async fn handle_transit(
     // can grab the data to send.
 
     // Create the push handlers as flume message passers of MultipleMessagesUpstream
-    let (push_passer_send, push_passer_receive) = flume::unbounded::<MultipleMessagesUpstream>();
+    let (push_passer_send, push_passer_receive) = flume::unbounded::<Vec<libtransit::SocksSocketUpstream>>();
 
     let (push_client_count, pull_client_count) = {
         let transit_socket = transit_socket.read().await;
@@ -430,12 +405,11 @@ pub async fn handle_transit(
     let BUFF_SIZE = 1024 * 256;
     let MODETIME = 10; // In milliseconds
 
-    let mut buffer_stream: Vec<UpStreamMessage> = Vec::new(); // TODO make these (and ones in the loop) appropriately presized
-    let mut buffer_close: Vec<CloseSocketMessage> = Vec::new();
-
     let mut last_upstream_time = Instant::now();
     let mut current_buffer_size = 0;
     let mut last_loop_time = Instant::now();
+
+    let mut socks_sockets: Vec<libtransit::SocksSocketUpstream> = Vec::with_capacity(8);
 
     loop {
         let delta  = Instant::now() - last_loop_time;
@@ -457,12 +431,34 @@ pub async fn handle_transit(
 
                 // Add in timing info
                 let now_ms = ms_since_epoch();
-                upstream.time_at_coordinator_ms = now_ms;
 
                 dprintln!("Gotten data to send up: {:?}", upstream);
                 
-                // Add it to the buffer
-                buffer_stream.push(upstream);
+                // Find the relevant socks socket to insert into
+                let mut found = false;
+                // Iterate over socks_sockets without taking ownership
+                for socks_socket in socks_sockets.iter_mut() {
+                    if socks_socket.socket_id == upstream.socket_id {
+                        // Insert into the socks socket
+                        socks_socket.payload.append(&mut upstream.payload);
+                        found = true;
+                        break;
+                    }
+                }
+
+                if !found {
+                    // Create a new socks socket
+                    let socks_socket = libtransit::SocksSocketUpstream {
+                        socket_id: upstream.socket_id,
+                        dest_ip: upstream.dest_ip,
+                        dest_port: upstream.dest_port,
+                        payload: upstream.payload,
+                        termination_reason: Vec::new(),
+                    };
+
+                    // Insert into the socks sockets
+                    socks_sockets.push(socks_socket);
+                }
 
                 // Increase the buffer size recorded
                 CLIENT_META_UPSTREAM.coordinator_to_request_buffer_bytes.fetch_add(size, Ordering::Relaxed);
@@ -492,11 +488,7 @@ pub async fn handle_transit(
         if current_buffer_size > BUFF_SIZE {
             println!("Sending data on due to buffer size");
             // Send the buffer to the push handler
-            let multiple_messages = MultipleMessagesUpstream {
-                stream_messages: buffer_stream,
-                close_socket_messages: buffer_close,
-            };
-            push_passer_send.send_async(multiple_messages).await.unwrap();
+            push_passer_send.send_async(socks_sockets.clone()).await.unwrap();
             // Set recorded buffer size to 0
             CLIENT_META_UPSTREAM.coordinator_to_request_buffer_bytes.store(0, Ordering::Relaxed);
 
@@ -504,8 +496,10 @@ pub async fn handle_transit(
             CLIENT_META_UPSTREAM.coordinator_to_request_channel_bytes.fetch_add(current_buffer_size, Ordering::Relaxed);
 
             // Reset buffer
-            buffer_stream = Vec::new();
-            buffer_close = Vec::new();
+            for socks_socket in socks_sockets.iter_mut() {
+                socks_socket.payload.clear(); // Avoids reallocations this way
+            }
+
             // Reset buffer size
             current_buffer_size = 0;
 
@@ -515,16 +509,11 @@ pub async fn handle_transit(
 
         // If we're above mode time and we have some - any - data
         if last_upstream_time.elapsed().as_millis() > MODETIME
-            && (buffer_close.len() > 0
-            || buffer_stream.len() > 0)
+            && current_buffer_size > 0
         {
             // Send the buffer to the push handler
-            let multiple_messages = MultipleMessagesUpstream {
-                stream_messages: buffer_stream,
-                close_socket_messages: buffer_close,
-            };
             println!("Sending data on due to modetime");
-            push_passer_send.send_async(multiple_messages).await.unwrap();
+            push_passer_send.send_async(socks_sockets.clone()).await.unwrap();
             // Set recorded buffer size to 0
             CLIENT_META_UPSTREAM.coordinator_to_request_buffer_bytes.store(0, Ordering::Relaxed);
 
@@ -532,8 +521,10 @@ pub async fn handle_transit(
             CLIENT_META_UPSTREAM.coordinator_to_request_channel_bytes.fetch_add(current_buffer_size, Ordering::Relaxed);
 
             // Reset buffer
-            buffer_close = Vec::new();
-            buffer_stream = Vec::new();
+            for socks_socket in &mut socks_sockets {
+                socks_socket.payload.clear(); // Avoids reallocations this way
+            }
+
             // Reset buffer size
             current_buffer_size = 0;
 
