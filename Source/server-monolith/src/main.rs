@@ -1,12 +1,8 @@
-use actix_web::dev::Server;
-use actix_web::rt::System;
 use actix_web::web::Bytes;
 use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use hex;
 use libsecrets::{self, EncryptionKey};
 use rand::Rng;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 
 use debug_print::{
     debug_eprint as deprint, debug_eprintln as deprintln, debug_print as dprint,
@@ -18,13 +14,13 @@ use dashmap::DashMap;
 mod config;
 mod new_transit;
 use new_transit::SessionActorsStorage;
+mod meta;
 
 use libtransit::{
     ClientMessageUpstream, DeclarationToken, ServerMessageDownstream,
-    ServerMetaDownstream, SocketID,
+    ServerMetaDownstream, SocketID, SocksSocketUpstream, SocksSocketDownstream, UnifiedPacketInfo,
+    ServerMetaDownstreamServerStats
 };
-
-mod meta;
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -51,8 +47,8 @@ async fn form_meta_response(session_actor_storage: &SessionActorsStorage, seq_nu
     let traffic_stats = (*session_actor_storage.traffic_stats).into_server_meta_downstream_traffic_stats();
 
     ServerMetaDownstream {
-        packet_info: libtransit::ServerMetaDownstreamPacketInfo { unix_ms: millis_time as u64, seq_num: seq_num },
-        server_stats: libtransit::ServerMetaDownstreamServerStats { cpu_usage: 0.0, memory_usage_kb: 0 },
+        packet_info: UnifiedPacketInfo { unix_ms: millis_time as u64, seq_num: seq_num },
+        server_stats: ServerMetaDownstreamServerStats { cpu_usage: 0.0, memory_usage_kb: 0 },
         logs: Vec::new(),
         traffic_stats,
     }
@@ -151,7 +147,7 @@ async fn downstream_data(
         };
 
     // Don't send on - just get
-    let mut downstream_messages = {
+    let mut downstream_socks_sockets = {
         let return_messages = actor.from_bundler_stream.recv_async().await;
 
         match return_messages {
@@ -164,29 +160,24 @@ async fn downstream_data(
         }
     };
 
-    // Set egress time on each message
-    let egress_time = meta::ms_since_epoch();
-    for message in downstream_messages.iter_mut() {
-        message.time_at_server_egress_ms = egress_time;
-    }
-
     // Modify traffic stats
-    let return_msgs_bytes = downstream_messages
+    let return_msgs_bytes = downstream_socks_sockets
         .iter()
         .map(|msg| msg.payload.len())
         .sum::<usize>();
 
     actor.traffic_stats.coordinator_down_to_http_message_passer_bytes.fetch_sub(return_msgs_bytes as u32, Ordering::Relaxed);
 
-    dprintln!("Returning data: {:?}", downstream_messages);
+    dprintln!("Returning data: {:?}", downstream_socks_sockets);
 
     // Get meta information
     let meta = form_meta_response(&actor, actor.seq_num_down.fetch_add(1, Ordering::SeqCst)).await;
 
     // Form response
     let response = ServerMessageDownstream {
-        messages: downstream_messages,
         metadata: meta,
+        socks_sockets: downstream_socks_sockets,
+        payload_size: 0,
     };
 
     // Encode response
@@ -281,24 +272,17 @@ async fn upstream_data(
         tokio::time::sleep(Duration::from_millis(1)).await;
     }
 
-    let ingress_time = meta::ms_since_epoch();
-
     // Send on to actor
     dprintln!("Sending on messages to actor...");
     {
         let to_bundler = &actor.to_bundler_stream;
 
-        // Set ingress time on each message
-        for message in upstream.messages.stream_messages.iter_mut() {
-            message.time_at_server_ingress_ms = ingress_time;
-        }
+        for socket in upstream.socks_sockets {
+            let payload_length = socket.payload.len() as u32;
 
-        // Send messages on
-        for message in upstream.messages.stream_messages {
-            let payload_length = message.payload.len();
+            to_bundler.send(socket).unwrap();
 
-            to_bundler.send(message).unwrap();
-            actor.traffic_stats.http_up_to_coordinator_bytes.fetch_add(payload_length as u32, Ordering::Relaxed);
+            actor.traffic_stats.http_up_to_coordinator_bytes.fetch_add(payload_length, Ordering::Relaxed);
         }
 
         actor.next_seq_num_up.store(seq_num + 1, Ordering::SeqCst);
@@ -313,8 +297,9 @@ async fn upstream_data(
 
     // Form response
     let response = ServerMessageDownstream {
-        messages: Vec::new(),
+        socks_sockets: Vec::with_capacity(0),
         metadata: meta,
+        payload_size: 0,
     };
 
     // Encode response
