@@ -454,7 +454,7 @@ async fn main() -> std::io::Result<()> {
             key,
         });
 
-        println!("Hashed key for user '{}'", user.name);
+        println!("Derived key for user '{}'", user.name);
     }
 
     let appstate = web::Data::new(AppState {
