@@ -25,7 +25,7 @@ use std::collections::HashMap;
 static RECEIVED_SEQ_NUM: AtomicU32 = AtomicU32::new(0);
 static SENT_SEQ_NUM: AtomicU32 = AtomicU32::new(0);
 
-use crate::meta::{CLIENT_META_UPSTREAM, ms_since_epoch};
+use crate::meta::{CLIENT_META_UPSTREAM, ms_since_epoch, YELLOW_DATA_UPSTREAM_QUEUE};
 
 use debug_print::{
     debug_eprint as deprint, debug_eprintln as deprintln, debug_print as dprint,
@@ -204,13 +204,13 @@ async fn push_handler(
 
         // Send the data
         // Encode and encrypt in a thread
-        let to_send = tokio::task::spawn_blocking(move || {
-            let upstream_message = ClientMessageUpstream {
-                socks_sockets: to_send,
-                metadata: get_metadata(SENT_SEQ_NUM.fetch_add(1, Ordering::SeqCst)),
-                payload_size,
-            };
+        let upstream_message = ClientMessageUpstream {
+            socks_sockets: to_send,
+            metadata: get_metadata(SENT_SEQ_NUM.fetch_add(1, Ordering::SeqCst)).await,
+            payload_size,
+        };
 
+        let to_send = tokio::task::spawn_blocking(move || {
             let data_bin = upstream_message.encoded().unwrap();
 
             let encrypted = libsecrets::encrypt(&data_bin, &key).unwrap();
@@ -238,7 +238,18 @@ async fn push_handler(
     }
 }
 
-fn get_metadata(seq_num: u32) -> ClientMetaUpstream {
+async fn get_metadata(seq_num: u32) -> ClientMetaUpstream {
+    let yellow_to_stop_reading_from = {
+        let mut data = YELLOW_DATA_UPSTREAM_QUEUE.write().await;
+
+        let to_return = data.clone();
+
+        // Clear the queue
+        data.clear();
+
+        to_return
+    };
+
     let data = ClientMetaUpstream {
         packet_info: UnifiedPacketInfo {
             unix_ms: SystemTime::now()
@@ -249,6 +260,7 @@ fn get_metadata(seq_num: u32) -> ClientMetaUpstream {
         },
         set: None,
         traffic_stats: CLIENT_META_UPSTREAM.as_base(),
+        yellow_to_stop_reading_from,
     };
 
     dprintln!("Sending metadata: {:?}", data);
@@ -280,13 +292,13 @@ async fn pull_handler(
 
     loop {
         // Could be made spawn_blocking if this turns out to take too long
-        let to_send = {
-            let upstream_message = ClientMessageUpstream {
-                socks_sockets: Vec::with_capacity(0),
-                metadata: get_metadata(0),
-                payload_size: 0,
-            };
+        let upstream_message = ClientMessageUpstream {
+            socks_sockets: Vec::with_capacity(0),
+            metadata: get_metadata(0).await,
+            payload_size: 0,
+        };
 
+        let to_send = {
             let data_bin = upstream_message.encoded().unwrap();
 
             let encrypted = libsecrets::encrypt(&data_bin, &key).unwrap();

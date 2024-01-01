@@ -95,6 +95,7 @@ pub struct ClientMetaUpstream {
     pub packet_info: UnifiedPacketInfo,
     pub traffic_stats: ClientMetaUpstreamTrafficStats,
     pub set: Option<ClientMetaUpstreamSet>,
+    pub yellow_to_stop_reading_from: Vec<SocketID>,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
@@ -160,6 +161,7 @@ fn test_client_upstream() {
                 response_to_socks_bytes: 0,
             },
             set: None,
+            yellow_to_stop_reading_from: vec![0],
         },
         socks_sockets: vec![SocksSocketUpstream {
             socket_id: 0,

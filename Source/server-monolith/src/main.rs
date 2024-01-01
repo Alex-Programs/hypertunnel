@@ -253,7 +253,7 @@ async fn upstream_data(
     dprintln!("Decrypted data");
 
     // Parse into ClientMessageUpstream
-    let mut upstream: ClientMessageUpstream =
+    let upstream: ClientMessageUpstream =
         match libtransit::ClientMessageUpstream::decode_from_bytes(&mut decrypted) {
             Ok(upstream) => upstream, // If it succeeds, pull out content from Result<>
             Err(_) => {
@@ -265,6 +265,10 @@ async fn upstream_data(
 
     // Get sequence number
     let seq_num = upstream.metadata.packet_info.seq_num;
+
+    // Get yellow sockets to close
+    let yellow_sockets = upstream.metadata.yellow_to_stop_reading_from;
+    println!("Yellow sockets: {:?}", yellow_sockets);
 
     while actor.next_seq_num_up.load(Ordering::SeqCst) != seq_num {
         // Wait until that's the case
