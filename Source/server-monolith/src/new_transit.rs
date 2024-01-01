@@ -19,6 +19,7 @@ use debug_print::{
 
 use crate::meta;
 use std::sync::atomic::AtomicU32;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -30,12 +31,14 @@ pub struct SessionActorsStorage {
     pub next_seq_num_up: AtomicU32,
     pub declaration_token: DeclarationToken,
     pub traffic_stats: Arc<meta::ServerMetaDownstreamTrafficStatsSynced>,
+    pub to_coordinator_yellow: mpsc::UnboundedSender<SocketID>,
 }
 
 pub async fn create_actor(key: &EncryptionKey, token: DeclarationToken) -> SessionActorsStorage {
     // Create the channel
     let (to_bundler_stream, from_http_stream) = mpsc::unbounded_channel();
     let (to_http_stream, from_bundler_stream) = flume::unbounded();
+    let (to_coordinator_yellow, from_coordinator_yellow) = mpsc::unbounded_channel();
 
     // Create the storage
     let storage = SessionActorsStorage {
@@ -53,6 +56,7 @@ pub async fn create_actor(key: &EncryptionKey, token: DeclarationToken) -> Sessi
             coordinator_down_to_http_buffer_bytes: AtomicU32::new(0),
             congestion_ctrl_intake_throttle: AtomicU32::new(0),
         }),
+        to_coordinator_yellow,
     };
 
     // Start the handler
@@ -60,6 +64,7 @@ pub async fn create_actor(key: &EncryptionKey, token: DeclarationToken) -> Sessi
         from_http_stream,
         to_http_stream,
         storage.traffic_stats.clone(),
+        from_coordinator_yellow,
     ));
 
     // Return the storage
@@ -70,6 +75,7 @@ pub async fn handle_session(
     mut from_http_stream: mpsc::UnboundedReceiver<SocksSocketUpstream>,
     to_http_stream: flume::Sender<Vec<SocksSocketDownstream>>,
     traffic_stats: Arc<meta::ServerMetaDownstreamTrafficStatsSynced>,
+    mut from_coordinator_yellow: mpsc::UnboundedReceiver<SocketID>,
 ) {
     let mut stream_to_tcp_handlers: HashMap<SocketID, mpsc::UnboundedSender<SocksSocketUpstream>> =
         HashMap::new();
@@ -77,6 +83,8 @@ pub async fn handle_session(
         SocketID,
         mpsc::UnboundedReceiver<DownStreamMessage>,
     > = HashMap::new();
+
+    let mut yellow_informers: HashMap<SocketID, Arc<AtomicBool>> = HashMap::new();
 
     let mut last_return_time: Instant = Instant::now();
     let mut buffer_size = 0;
@@ -96,6 +104,36 @@ pub async fn handle_session(
 
         let mut no_received_http = true;
         let mut no_received_tcp = false;
+
+        // Handle inbound yellow messages
+        loop {
+            match from_coordinator_yellow.try_recv() {
+                Ok(socket_id) => {
+                    // Get the TCP handler
+                    let handler = stream_to_tcp_handlers.get(&socket_id);
+
+                    // Remove from the map
+                    stream_to_tcp_handlers.remove(&socket_id);
+
+                    // Inform it to close ASAP
+                    let informer = yellow_informers.get(&socket_id).unwrap();
+
+                    informer.store(true, Ordering::Relaxed);
+
+                    // Remove from the map
+                    yellow_informers.remove(&socket_id);
+                }
+                Err(e) => {
+                    // Check if the channel is empty
+                    if e == mpsc::error::TryRecvError::Empty {
+                        break;
+                    } else {
+                        // Panic
+                        panic!("Error receiving yellow messages from HTTP stream: {:?}", e);
+                    }
+                }
+            }
+        }
 
         // TCP to HTTP messages
         for downstream_socket in &mut downstream_sockets {
@@ -220,6 +258,11 @@ pub async fn handle_session(
 
                     downstream_sockets.push(downstream_socket);
 
+                    let yellow_informer = Arc::new(AtomicBool::new(false));
+
+                    // Add the informer to the map
+                    yellow_informers.insert(socket_id, yellow_informer.clone());
+
                     // Spawn the TCP handler
                     tokio::spawn(handle_tcp(
                         from_http_stream,
@@ -228,6 +271,7 @@ pub async fn handle_session(
                         message.dest_port,
                         message.socket_id,
                         traffic_stats.clone(),
+                        yellow_informer
                     ));
 
                     // Get the TCP handler
@@ -312,9 +356,20 @@ async fn handle_tcp_down(
     mut tcp_read_half: tokio::net::tcp::OwnedReadHalf,
     socket_id: SocketID,
     traffic_stats: Arc<meta::ServerMetaDownstreamTrafficStatsSynced>,
+    yellow_informer: Arc<AtomicBool>,
 ) {
     loop {
+        if yellow_informer.load(Ordering::Relaxed) {
+            dprintln!("Socket {} is yellow, closing", socket_id);
+            return;
+        }
+
         let ready = tcp_read_half.ready(Interest::READABLE).await;
+
+        if yellow_informer.load(Ordering::Relaxed) {
+            dprintln!("Socket {} is yellow, closing", socket_id);
+            return;
+        }
 
         if ready.is_err() {
             // TODO handle this better
@@ -337,6 +392,11 @@ async fn handle_tcp_down(
                     panic!("Error reading from TCP stream: {:?}", e);
                 }
             };
+
+            if yellow_informer.load(Ordering::Relaxed) {
+                dprintln!("Socket {} is yellow, closing", socket_id);
+                return;
+            }
 
             if bytes_read == 0 {
                 // TODO handle socket close
@@ -368,6 +428,7 @@ pub async fn handle_tcp(
     port: u16,
     socket_id: SocketID,
     traffic_stats: Arc<meta::ServerMetaDownstreamTrafficStatsSynced>,
+    yellow_informer: Arc<AtomicBool>,
 ) {
     let stream = TcpStream::connect(format!("{}:{}", ip, port)).await;
     let stream = match stream {
@@ -394,5 +455,6 @@ pub async fn handle_tcp(
         tcp_read_half,
         socket_id,
         traffic_stats.clone(),
+        yellow_informer,
     ));
 }

@@ -15,6 +15,7 @@ use transit_builder::TransitSocketBuilder;
 mod transit;
 mod meta;
 use meta::CLIENT_META_UPSTREAM;
+use meta::YELLOW_DATA_UPSTREAM_QUEUE;
 
 #[allow(unused)]
 use debug_print::{
@@ -204,11 +205,12 @@ async fn tcp_listener(stream: TcpStream, upstream_passer_send: Sender<UpStreamMe
 
     // Spawn both tasks
     task::spawn(tcp_handler_up(read_half, socket_id, dstip, dstport, upstream_passer_send.clone()));
-    task::spawn(tcp_handler_down(write_half, downstream_passer_receive));
+    task::spawn(tcp_handler_down(write_half, downstream_passer_receive, socket_id));
 }
 
-async fn tcp_handler_down(write_half: tokio::net::tcp::OwnedWriteHalf,
+async fn tcp_handler_down(mut write_half: tokio::net::tcp::OwnedWriteHalf,
     mut downstream_passer_receive: UnboundedReceiver<SocksSocketDownstream>,
+    socket_id: SocketID,
 ) {
     loop {
         let ready = write_half.ready(Interest::WRITABLE).await.expect("Failed to wait for socket to be ready");
@@ -230,23 +232,30 @@ async fn tcp_handler_down(write_half: tokio::net::tcp::OwnedWriteHalf,
                             dprintln!("Sent {} bytes to client", length);
                         },
                         Err(error) => {
-                            // TODO handle properly
-                            eprintln!("Failed to send data to client: {:?}", error);
-                            continue
+                            // We can't write anymore. This should be propagated
+                            // up the yellow route
+                            yellow_route_record_error(socket_id, error.to_string()).await;
                         }
                     }
-
-                    // TODO properly handle termination reasons
                 },
                 None => {
-                    // Transit has disconnected
-                    // TODO handle properly
-                    eprintln!("Transit has disconnected; socket cannot be sustained");
+                    // Message passer has disconnected due to green route closing
+                    // Simply close this half of the socket
+
+                    write_half.shutdown().await.expect("Failed to shutdown socket at green route passer close");
+
+                    // Now leave
                     return
                 }
             }
         }
     }
+}
+
+async fn yellow_route_record_error(socket_id: SocketID, reason: String) {
+    dprintln!("Yellow route error on socket id {} : {}", socket_id, reason);
+
+    YELLOW_DATA_UPSTREAM_QUEUE.write().await.push(socket_id);
 }
 
 async fn tcp_handler_up(mut read_half: tokio::net::tcp::OwnedReadHalf,
