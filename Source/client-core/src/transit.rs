@@ -414,7 +414,7 @@ pub async fn handle_transit(
     }
 
     // TODO make this variable
-    let BUFF_SIZE = 1024 * 256;
+    let FORCE_SEND_BUFF_SIZE = 1024 * 256;
     let MODETIME = 10; // In milliseconds
 
     let mut last_upstream_time = Instant::now();
@@ -451,8 +451,14 @@ pub async fn handle_transit(
                 // Iterate over socks_sockets without taking ownership
                 for socks_socket in socks_sockets.iter_mut() {
                     if socks_socket.socket_id == upstream.socket_id {
-                        // Insert into the socks socket
-                        socks_socket.payload.append(&mut upstream.payload);
+                        // Is it a terminate message?
+                        if upstream.red_terminate {
+                            // Set terminate flag to true on the socks socket
+                            socks_socket.red_terminate = true;
+                        } else {
+                            // Insert into the socks socket
+                            socks_socket.payload.append(&mut upstream.payload);
+                        }
                         found = true;
                         break;
                     }
@@ -465,7 +471,7 @@ pub async fn handle_transit(
                         dest_ip: upstream.dest_ip,
                         dest_port: upstream.dest_port,
                         payload: upstream.payload,
-                        termination_reason: Vec::new(),
+                        red_terminate: false,
                     };
 
                     // Insert into the socks sockets
@@ -496,35 +502,22 @@ pub async fn handle_transit(
             }
         }
 
-        // If we're above buff size
-        if current_buffer_size > BUFF_SIZE {
-            println!("Sending data on due to buffer size");
-            // Send the buffer to the push handler
-            push_passer_send.send_async(socks_sockets.clone()).await.unwrap();
-            // Set recorded buffer size to 0
-            CLIENT_META_UPSTREAM.coordinator_to_request_buffer_bytes.store(0, Ordering::Relaxed);
-
-            // Increment egress buffer
-            CLIENT_META_UPSTREAM.coordinator_to_request_channel_bytes.fetch_add(current_buffer_size, Ordering::Relaxed);
-
-            // Reset buffer
-            for socks_socket in socks_sockets.iter_mut() {
-                socks_socket.payload.clear(); // Avoids reallocations this way
-            }
-
-            // Reset buffer size
-            current_buffer_size = 0;
-
-            // Reset last upstream time
-            last_upstream_time = Instant::now();
+        let mut do_send = false;
+        if current_buffer_size > FORCE_SEND_BUFF_SIZE {
+            println!("Sending on due to buffer size {} being greater than {}", current_buffer_size, FORCE_SEND_BUFF_SIZE);
+            do_send = true;
         }
 
-        // If we're above mode time and we have some - any - data
         if last_upstream_time.elapsed().as_millis() > MODETIME
             && current_buffer_size > 0
         {
+            println!("Sending on due to modetime");
+            do_send = true;
+        }
+
+        // If we're above buff size
+        if do_send {
             // Send the buffer to the push handler
-            println!("Sending data on due to modetime");
             push_passer_send.send_async(socks_sockets.clone()).await.unwrap();
             // Set recorded buffer size to 0
             CLIENT_META_UPSTREAM.coordinator_to_request_buffer_bytes.store(0, Ordering::Relaxed);
@@ -532,9 +525,12 @@ pub async fn handle_transit(
             // Increment egress buffer
             CLIENT_META_UPSTREAM.coordinator_to_request_channel_bytes.fetch_add(current_buffer_size, Ordering::Relaxed);
 
+            // Eliminate socks sockets with terminate flag set
+            socks_sockets.retain(|x| !x.red_terminate); // This is *elegant*
+
             // Reset buffer
-            for socks_socket in &mut socks_sockets {
-                socks_socket.payload.clear(); // Avoids reallocations this way
+            for socks_socket in socks_sockets.iter_mut() {
+                socks_socket.payload.clear(); // Avoids reallocations this way, but causes unnecessary memory usage
             }
 
             // Reset buffer size

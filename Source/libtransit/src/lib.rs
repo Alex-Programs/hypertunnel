@@ -27,6 +27,7 @@ pub struct UpStreamMessage {
     pub dest_ip: IPV4,
     pub dest_port: Port,
     pub payload: Vec<u8>,
+    pub red_terminate: bool,
 }
 
 impl UpStreamMessage {
@@ -47,6 +48,7 @@ fn test_upstream_msg() {
         dest_ip: 0,
         dest_port: 0,
         payload: vec![0, 1, 2, 3],
+        red_terminate: false,
     };
     let encoded = msg.encoded().unwrap();
     let decoded = UpStreamMessage::decode_from_bytes(&mut encoded.clone()).unwrap();
@@ -125,13 +127,7 @@ pub struct SocksSocketUpstream {
     pub dest_ip: IPV4,
     pub dest_port: Port,
     pub payload: Vec<u8>,
-    pub termination_reason: Vec<UpStreamTerminationReason>,
-}
-
-#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
-pub enum UpStreamTerminationReason {
-    SocketClosed,
-    // Todo add more as I implement them
+    pub red_terminate: bool,
 }
 
 impl ClientMessageUpstream {
@@ -168,7 +164,7 @@ fn test_client_upstream() {
             dest_ip: 0,
             dest_port: 0,
             payload: vec![0, 1, 2, 3],
-            termination_reason: vec![UpStreamTerminationReason::SocketClosed],
+            red_terminate: false,
         }],
         payload_size: 4,
     };
@@ -282,6 +278,7 @@ fn test_server_message_downstream() {
             payload: vec![0, 1, 2, 3],
             termination_reasons: vec![DownStreamTerminationReason::SocketClosed],
         }],
+        payload_size: 4,
     };
     let encoded = msg.encoded().unwrap();
     let decoded = ServerMessageDownstream::decode_from_bytes(&mut encoded.clone()).unwrap();
