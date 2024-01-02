@@ -281,6 +281,8 @@ pub async fn handle_session(
                     tcp_handler.unwrap()
                 };
 
+                let do_red_terminate = message.red_terminate;
+
                 // Send the payload to the TCP handler
                 let msg_size = message.payload.len() as u32;
                 tcp_handler.send(message).unwrap();
@@ -291,6 +293,14 @@ pub async fn handle_session(
                 traffic_stats
                     .http_up_to_coordinator_bytes
                     .fetch_sub(msg_size, Ordering::Relaxed);
+
+                // Check if the message says to terminate
+                if do_red_terminate {
+                    // Remove the HTTP-to-TCP for this socket
+                    stream_to_tcp_handlers.remove(&socket_id);
+
+                    // Everything else should be handled in the sent-on-message having the terminate flag in the handler
+                }
             }
             Err(e) => {
                 // Check if the channel is empty
@@ -316,8 +326,6 @@ async fn handle_tcp_up(
     traffic_stats: Arc<meta::ServerMetaDownstreamTrafficStatsSynced>,
     socket_id: SocketID,
 ) {
-    let mut return_sequence_number = 0;
-
     loop {
         let ready = tcp_write_half.ready(Interest::WRITABLE).await;
 
@@ -330,7 +338,7 @@ async fn handle_tcp_up(
 
         if ready.is_writable() {
             // We're using an asynchronous wait here to avoid the old hot-loop system
-            let mut message = match from_http_stream.recv().await {
+            let message = match from_http_stream.recv().await {
                 Some(message) => message,
                 None => {
                     // TODO handle this better
@@ -347,6 +355,12 @@ async fn handle_tcp_up(
             tcp_write_half.write_all(&message.payload).await.unwrap();
 
             dprintln!("Written to the stream");
+
+            // Check if we should terminate
+            if message.red_terminate {
+                // Simply return
+                return;
+            }
         }
     }
 }

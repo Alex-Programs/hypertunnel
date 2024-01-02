@@ -275,6 +275,7 @@ async fn tcp_handler_up(mut read_half: tokio::net::tcp::OwnedReadHalf,
                 dest_ip,
                 dest_port,
                 payload: vec![0; 512], // TODO changeable
+                red_terminate: false,
             };
 
             let bytes_read = match read_half.read(&mut upstream_msg.payload).await {
@@ -287,7 +288,8 @@ async fn tcp_handler_up(mut read_half: tokio::net::tcp::OwnedReadHalf,
 
             if bytes_read == 0 {
                 // The socket was closed
-                // TODO handle properly
+                upstream_msg.red_terminate = true;
+                upstream_passer_send.send(upstream_msg).await.expect("Failed to send data to transit");
                 return
             }
 
