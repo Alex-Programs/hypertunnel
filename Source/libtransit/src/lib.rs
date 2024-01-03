@@ -59,6 +59,7 @@ fn test_upstream_msg() {
 pub struct DownStreamMessage {
     pub socket_id: SocketID,
     pub payload: Vec<u8>,
+    pub do_green_terminate: bool,
 }
 
 impl DownStreamMessage {
@@ -77,6 +78,7 @@ fn test_downstream_msg() {
     let msg = DownStreamMessage {
         socket_id: 0,
         payload: vec![0, 1, 2, 3],
+        do_green_terminate: false,
     };
     let encoded = msg.encoded().unwrap();
     let decoded = DownStreamMessage::decode_from_bytes(&mut encoded.clone()).unwrap();
@@ -217,13 +219,7 @@ pub struct SocksSocketDownstream {
     pub dest_ip: IPV4,
     pub dest_port: Port,
     pub payload: Vec<u8>,
-    pub termination_reasons: Vec<DownStreamTerminationReason>,
-}
-
-#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
-pub enum DownStreamTerminationReason {
-    SocketClosed,
-    // Todo add more as I implement them
+    pub do_green_terminate: bool,
 }
 
 #[repr(u8)]
@@ -276,7 +272,7 @@ fn test_server_message_downstream() {
             dest_ip: 0,
             dest_port: 0,
             payload: vec![0, 1, 2, 3],
-            termination_reasons: vec![DownStreamTerminationReason::SocketClosed],
+            do_green_terminate: false,
         }],
         payload_size: 4,
     };
