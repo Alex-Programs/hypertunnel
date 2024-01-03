@@ -2,6 +2,9 @@ use rand::Rng; // Not unused - ignore vscode
 use borsh::{BorshSerialize, BorshDeserialize};
 use std::collections::HashMap;
 
+#[cfg(test)]
+mod tests;
+
 pub type Port = u16;
 pub type IPV4 = u32;
 pub type SocketID = u32;
@@ -9,16 +12,22 @@ pub type DeclarationToken = [u8; 16];
 
 static LAST_SOCKET_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
-pub fn generate_socket_id() -> SocketID {
-    LAST_SOCKET_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst) as SocketID
+pub trait SerialMessage: BorshSerialize + BorshDeserialize {
+    fn encoded(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let data = self.try_to_vec()?;
+        Ok(data)
+    }
+
+    fn decode_from_bytes(data: &mut Vec<u8>) -> Result<Self, std::io::Error>
+    where
+        Self: Sized,
+    {
+        Self::try_from_slice(data)
+    }
 }
 
-#[test]
-fn test_generate_socket_id() {
-    let socket_id = generate_socket_id();
-    assert_eq!(socket_id, 0);
-    let socket_id = generate_socket_id();
-    assert_eq!(socket_id, 1);
+pub fn generate_socket_id() -> SocketID {
+    LAST_SOCKET_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst) as SocketID
 }
 
 #[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
@@ -30,30 +39,7 @@ pub struct UpStreamMessage {
     pub red_terminate: bool,
 }
 
-impl UpStreamMessage {
-    pub fn encoded(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        let data = self.try_to_vec()?;
-        Ok(data)
-    }
-
-    pub fn decode_from_bytes(data: &mut Vec<u8>) -> Result<Self, std::io::Error> { // Borsh returns std::io::Error
-        Self::try_from_slice(data)
-    }
-}
-
-#[test]
-fn test_upstream_msg() {
-    let msg = UpStreamMessage {
-        socket_id: 0,
-        dest_ip: 0,
-        dest_port: 0,
-        payload: vec![0, 1, 2, 3],
-        red_terminate: false,
-    };
-    let encoded = msg.encoded().unwrap();
-    let decoded = UpStreamMessage::decode_from_bytes(&mut encoded.clone()).unwrap();
-    assert_eq!(msg, decoded);
-}
+impl SerialMessage for UpStreamMessage {}
 
 #[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
 pub struct DownStreamMessage {
@@ -62,28 +48,7 @@ pub struct DownStreamMessage {
     pub do_green_terminate: bool,
 }
 
-impl DownStreamMessage {
-    pub fn encoded(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        let data = self.try_to_vec()?;
-        Ok(data)
-    }
-
-    pub fn decode_from_bytes(data: &mut Vec<u8>) -> Result<Self, std::io::Error> { // Borsh returns std::io::Error
-        Self::try_from_slice(data)
-    }
-}
-
-#[test]
-fn test_downstream_msg() {
-    let msg = DownStreamMessage {
-        socket_id: 0,
-        payload: vec![0, 1, 2, 3],
-        do_green_terminate: false,
-    };
-    let encoded = msg.encoded().unwrap();
-    let decoded = DownStreamMessage::decode_from_bytes(&mut encoded.clone()).unwrap();
-    assert_eq!(msg, decoded);
-}
+impl SerialMessage for DownStreamMessage {}
 
 // ================================================= //
 
@@ -132,48 +97,7 @@ pub struct SocksSocketUpstream {
     pub red_terminate: bool,
 }
 
-impl ClientMessageUpstream {
-    pub fn encoded(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        let data = self.try_to_vec()?;
-        Ok(data)
-    }
-
-    pub fn decode_from_bytes(data: &mut Vec<u8>) -> Result<Self, std::io::Error> { // Borsh returns std::io::Error
-        Self::try_from_slice(data)
-    }
-}
-
-#[test]
-fn test_client_upstream() {
-    let msg = ClientMessageUpstream {
-        metadata: ClientMetaUpstream {
-            packet_info: UnifiedPacketInfo {
-                unix_ms: 0,
-                seq_num: 0,
-            },
-            traffic_stats: ClientMetaUpstreamTrafficStats {
-                socks_to_coordinator_bytes: 0,
-                coordinator_to_request_buffer_bytes: 0,
-                coordinator_to_request_channel_bytes: 0,
-                up_request_in_progress_bytes: 0,
-                response_to_socks_bytes: 0,
-            },
-            set: None,
-            yellow_to_stop_reading_from: vec![0],
-        },
-        socks_sockets: vec![SocksSocketUpstream {
-            socket_id: 0,
-            dest_ip: 0,
-            dest_port: 0,
-            payload: vec![0, 1, 2, 3],
-            red_terminate: false,
-        }],
-        payload_size: 4,
-    };
-    let encoded = msg.encoded().unwrap();
-    let decoded = ClientMessageUpstream::decode_from_bytes(&mut encoded.clone()).unwrap();
-    assert_eq!(msg, decoded);
-}
+impl SerialMessage for ClientMessageUpstream {}
 
 #[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug)]
 pub struct ServerMessageDownstream {
@@ -230,53 +154,4 @@ pub enum ServerMetaDownstreamLogSeverity {
     Error,
 }
 
-impl ServerMessageDownstream {
-    pub fn encoded(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        let data = self.try_to_vec()?;
-        Ok(data)
-    }
-
-    pub fn decode_from_bytes(data: &mut Vec<u8>) -> Result<Self, std::io::Error> { // Borsh returns std::io::Error
-        Self::try_from_slice(data)
-    }
-}
-
-#[test]
-fn test_server_message_downstream() {
-    let msg = ServerMessageDownstream {
-        metadata: ServerMetaDownstream {
-            packet_info: UnifiedPacketInfo {
-                unix_ms: 0,
-                seq_num: 0,
-            },
-            traffic_stats: ServerMetaDownstreamTrafficStats {
-                http_up_to_coordinator_bytes: 0,
-                coordinator_up_to_socket_bytes: 0,
-                socket_down_to_coordinator_bytes: 0,
-                coordinator_down_to_http_message_passer_bytes: 0,
-                coordinator_down_to_http_buffer_bytes: 0,
-                congestion_ctrl_intake_throttle: 0,
-            },
-            server_stats: ServerMetaDownstreamServerStats {
-                cpu_usage: 0.0,
-                memory_usage_kb: 0,
-            },
-            logs: vec![ServerMetaDownstreamLog {
-                timestamp: 0,
-                severity: ServerMetaDownstreamLogSeverity::Info,
-                message: "test".to_string(),
-            }],
-        },
-        socks_sockets: vec![SocksSocketDownstream {
-            socket_id: 0,
-            dest_ip: 0,
-            dest_port: 0,
-            payload: vec![0, 1, 2, 3],
-            do_green_terminate: false,
-        }],
-        payload_size: 4,
-    };
-    let encoded = msg.encoded().unwrap();
-    let decoded = ServerMessageDownstream::decode_from_bytes(&mut encoded.clone()).unwrap();
-    assert_eq!(msg, decoded);
-}
+impl SerialMessage for ServerMessageDownstream {}

@@ -1,3 +1,5 @@
+use libtransit::SerialMessage;
+
 use flume::{self, Receiver as FlumeReceiver, Sender as FlumeSender};
 use libsecrets::{self, EncryptionKey};
 use libtransit::{self, UnifiedPacketInfo, SocksSocketUpstream, SocksSocketDownstream};
