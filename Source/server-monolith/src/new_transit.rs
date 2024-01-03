@@ -253,7 +253,7 @@ pub async fn handle_session(
                         dest_ip: message.dest_ip,
                         dest_port: message.dest_port,
                         payload: Vec::with_capacity(512),
-                        termination_reasons: Vec::with_capacity(1),
+                        do_green_terminate: false,
                     };
 
                     downstream_sockets.push(downstream_socket);
@@ -396,6 +396,7 @@ async fn handle_tcp_down(
             let mut downstream_msg = DownStreamMessage {
                 socket_id,
                 payload: vec![0; 512], // TODO make this configurable
+                do_green_terminate: false,
             };
 
             // Write in directly for efficiency
