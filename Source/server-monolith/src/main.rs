@@ -3,6 +3,7 @@ use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Resp
 use hex;
 use libsecrets::{self, EncryptionKey};
 use rand::Rng;
+use libtransit::SerialMessage;
 
 use debug_print::{
     debug_eprint as deprint, debug_eprintln as deprintln, debug_print as dprint,
