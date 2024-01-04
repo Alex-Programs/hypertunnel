@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt, Interest};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, Interest, Ready};
 use tokio::net::TcpStream;
 
 use libsecrets::EncryptionKey;
@@ -84,6 +84,8 @@ pub async fn handle_session(
         mpsc::UnboundedReceiver<DownStreamMessage>,
     > = HashMap::new();
 
+    let (blue_termination_sender, blue_termination_receiver) = mpsc::unbounded_channel();
+
     let mut yellow_informers: HashMap<SocketID, Arc<AtomicBool>> = HashMap::new();
 
     let mut last_return_time: Instant = Instant::now();
@@ -109,9 +111,6 @@ pub async fn handle_session(
         loop {
             match from_coordinator_yellow.try_recv() {
                 Ok(socket_id) => {
-                    // Get the TCP handler
-                    let handler = stream_to_tcp_handlers.get(&socket_id);
-
                     // Remove from the map
                     stream_to_tcp_handlers.remove(&socket_id);
 
@@ -177,10 +176,51 @@ pub async fn handle_session(
                 });
         }
 
+        // Set do_blue_terminate for each socket based on ingress from the blue channel
+        loop {
+            match blue_termination_receiver.try_recv() {
+                Ok(socket_id) => {
+                    // Get the downstream socket
+                    let downstream_socket = downstream_sockets
+                        .iter_mut()
+                        .find(|socket| socket.socket_id == socket_id)
+                        .unwrap();
+
+                    downstream_socket.do_blue_terminate = true;
+                }
+                Err(e) => {
+                    // Check if the channel is empty
+                    if e == mpsc::error::TryRecvError::Empty {
+                        break;
+                    } else {
+                        // Panic
+                        panic!("Error receiving blue messages from TCP handler: {:?}", e);
+                    }
+                }
+            }
+        }
+
         // Check if we should return the buffer
-        if buffer_size > 128 * 1024 {
-            // Send the buffer
-            dprintln!("Sending buffer back due to size!");
+        let should_return = if buffer_size > 128 * 1024 {
+            dprintln!("Returning; Buffer size is {}", buffer_size);
+            true
+        } else if last_return_time.elapsed() > Duration::from_millis(10) {
+            if buffer_size > 0 {
+                dprintln!("Returning; Time since last return is {:?}", last_return_time.elapsed());
+
+                last_return_time = Instant::now();
+
+                true
+            } else {
+                last_return_time = Instant::now();
+
+                false
+            }
+        } else {
+            false
+        };
+
+        if should_return {
             to_http_stream.send(downstream_sockets.clone()).unwrap();
 
             traffic_stats
@@ -189,6 +229,8 @@ pub async fn handle_session(
             traffic_stats
                 .coordinator_down_to_http_buffer_bytes
                 .fetch_sub(buffer_size as u32, Ordering::Relaxed);
+
+            downstream_sockets.retain(|socket| !socket.do_green_terminate);
 
             // Reset the buffer
             for socket in &mut downstream_sockets { // NOTE: TODO: This will memory leak in a long enough period unless we have a timeout for unused sockets
@@ -199,39 +241,6 @@ pub async fn handle_session(
 
             // Update the last return time
             last_return_time = Instant::now();
-        }
-
-        // Check if it exceeds modetime
-        if last_return_time.elapsed() > Duration::from_millis(10) {
-            if buffer_size > 0 {
-                dprintln!("Sending buffer back due to modetime!");
-
-                // Send the buffer
-                to_http_stream.send(downstream_sockets.clone()).unwrap();
-
-                traffic_stats
-                    .coordinator_down_to_http_message_passer_bytes
-                    .fetch_add(buffer_size as u32, Ordering::Relaxed);
-                traffic_stats
-                    .coordinator_down_to_http_buffer_bytes
-                    .fetch_sub(buffer_size as u32, Ordering::Relaxed);
-
-                // Remove all sockets set to terminate
-                downstream_sockets.retain(|socket| !socket.do_green_terminate);
-
-                // Reset the buffer
-                for socket in &mut downstream_sockets { // NOTE: TODO: This will memory leak in a long enough period unless we have a timeout for unused sockets
-                    socket.payload.clear();
-                }
-
-                buffer_size = 0;
-
-                // Update the last return time
-                last_return_time = Instant::now();
-            } else {
-                // Update the last return time
-                last_return_time = Instant::now();
-            }
         }
 
         // HTTP to TCP messages
@@ -261,6 +270,7 @@ pub async fn handle_session(
                         dest_port: message.dest_port,
                         payload: Vec::with_capacity(512),
                         do_green_terminate: false,
+                        do_blue_terminate: false,
                     };
 
                     downstream_sockets.push(downstream_socket);
@@ -278,7 +288,8 @@ pub async fn handle_session(
                         message.dest_port,
                         message.socket_id,
                         traffic_stats.clone(),
-                        yellow_informer
+                        yellow_informer,
+                        blue_termination_sender.clone()
                     ));
 
                     // Get the TCP handler
@@ -327,23 +338,47 @@ pub async fn handle_session(
     }
 }
 
+// TODO
+fn send_down_blue_channel(blue_message_sender: mpsc::UnboundedSender<SocketID>, socket_id: SocketID) {
+    dprintln!("Socket {} is closing on blue route", socket_id);
+
+    // Send the message
+    blue_message_sender.send(socket_id).unwrap();
+}
+
 async fn handle_tcp_up(
     mut from_http_stream: mpsc::UnboundedReceiver<SocksSocketUpstream>,
     mut tcp_write_half: tokio::net::tcp::OwnedWriteHalf,
     traffic_stats: Arc<meta::ServerMetaDownstreamTrafficStatsSynced>,
     socket_id: SocketID,
+    blue_message_sender: mpsc::UnboundedSender<SocketID>,
 ) {
     loop {
         let ready = tcp_write_half.ready(Interest::WRITABLE).await;
 
         if ready.is_err() {
-            // TODO handle this better
             panic!("Error getting ready state: {:?}", ready);
         }
 
         let ready = ready.unwrap();
 
-        if ready.is_writable() {
+        let go_ahead = if ready.is_writable() {
+            true
+        } else if ready.is_empty() {
+            false
+        } else if ready.is_write_closed() {
+            // Send and close
+            send_down_blue_channel(blue_message_sender, socket_id);
+            return;
+        } else if ready.is_readable() {
+            panic!("Asking if something is writable returned 'readable' ready state!?!?");
+        } else if ready.is_read_closed() {
+            panic!("Asking if something is writable returned 'read closed' ready state!?!?");
+        } else {
+            panic!("Unknown ready state: {:?}", ready);
+        };
+
+        if go_ahead {
             // We're using an asynchronous wait here to avoid the old hot-loop system
             let message = match from_http_stream.recv().await {
                 Some(message) => message,
@@ -370,6 +405,19 @@ async fn handle_tcp_up(
             }
         }
     }
+}
+
+fn send_green_terminate(to_http_stream: mpsc::UnboundedSender<DownStreamMessage>, socket_id: SocketID) {
+    dprintln!("Socket {} is closing on green route", socket_id);
+
+    let downstream_msg = DownStreamMessage {
+        socket_id,
+        payload: Vec::with_capacity(0),
+        do_green_terminate: true,
+    };
+
+    // Send the message
+    to_http_stream.send(downstream_msg).unwrap();
 }
 
 async fn handle_tcp_down(
@@ -399,7 +447,23 @@ async fn handle_tcp_down(
 
         let ready = ready.unwrap();
 
-        if ready.is_readable() {
+        let go_ahead = if ready.is_readable() {
+            true
+        } else if ready.is_empty() {
+            false
+        } else if ready.is_read_closed() {
+            // Send down green channel, then return
+            send_green_terminate(to_http_stream, socket_id);
+            return;
+        } else if ready.is_writable() {
+            panic!("Asking if something is readable returned 'writable' ready state!?!?");
+        } else if ready.is_write_closed() {
+            panic!("Asking if something is readable returned 'write closed' ready state!?!?");
+        } else {
+            panic!("Unknown ready state: {:?}", ready);
+        };
+
+        if go_ahead {
             let mut downstream_msg = DownStreamMessage {
                 socket_id,
                 payload: vec![0; 512], // TODO make this configurable
@@ -420,14 +484,10 @@ async fn handle_tcp_down(
                 return;
             }
 
-            let mut do_term = false;
             if bytes_read == 0 {
-                // Socket is closing. Send back a terminate message
-                downstream_msg.do_green_terminate = true;
-                downstream_msg.payload = Vec::with_capacity(0);
-                dprintln!("Socket {} is closing on green route", socket_id);
-
-                do_term = true;
+                // Socket is closing. Send back a terminate message then close
+                send_green_terminate(to_http_stream, socket_id);
+                return;
             }
 
             // Trim array down to size
@@ -444,10 +504,6 @@ async fn handle_tcp_down(
             traffic_stats
                 .socket_down_to_coordinator_bytes
                 .fetch_add(payload_size, Ordering::Relaxed);
-
-            if do_term {
-                return;
-            }
         }
     }
 }
@@ -460,6 +516,7 @@ pub async fn handle_tcp(
     socket_id: SocketID,
     traffic_stats: Arc<meta::ServerMetaDownstreamTrafficStatsSynced>,
     yellow_informer: Arc<AtomicBool>,
+    handle_blue_sender: mpsc::UnboundedSender<SocketID>,
 ) {
     let stream = TcpStream::connect(format!("{}:{}", ip, port)).await;
     let stream = match stream {
@@ -479,6 +536,7 @@ pub async fn handle_tcp(
         tcp_write_half,
         traffic_stats.clone(),
         socket_id,
+        handle_blue_sender
     ));
 
     tokio::spawn(handle_tcp_down(

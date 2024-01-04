@@ -218,12 +218,12 @@ async fn push_handler(
             let encrypted = libsecrets::encrypt(&data_bin, &key).unwrap();
 
             encrypted
-        });
+        }).await.unwrap();
 
         // Send the data
         let response = client
             .post(&format!("{}/upload", target))
-            .body(to_send.await.unwrap())
+            .body(to_send)
             .headers(headers.clone())
             .timeout(timeout_duration) // TODO RM
             .send()
@@ -342,6 +342,10 @@ async fn pull_handler(
         RECEIVED_SEQ_NUM.fetch_add(1, Ordering::SeqCst);
 
         for mut socket in decoded.socks_sockets {
+            // Do we need to send on a blue termination signal?
+            if socket.do_blue_terminate {
+                // TODO finish this - use a message passer to inform the coordinator to wipe data and tell the reader to terminate
+            }
             let socket_id = socket.socket_id;
             let do_term = socket.do_green_terminate;
 
