@@ -144,6 +144,7 @@ pub struct SocksSocketDownstream {
     pub dest_port: Port,
     pub payload: Vec<u8>,
     pub do_green_terminate: bool,
+    pub do_blue_terminate: bool,
 }
 
 #[repr(u8)]
