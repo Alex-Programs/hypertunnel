@@ -343,6 +343,7 @@ async fn pull_handler(
 
         for mut socket in decoded.socks_sockets {
             let socket_id = socket.socket_id;
+            let do_term = socket.do_green_terminate;
 
             // Get the sender
             let sender = return_lookup.get(&socket_id);
@@ -374,6 +375,15 @@ async fn pull_handler(
                     // Send the message
                     sender.send(socket).unwrap();
                 }
+            }
+
+            // Is it set to terminate?
+            if do_term {
+                // Remove the sender from the lookup. Yes this can sometimes add then immediately remove from the hashmap if they terminate on their first transit window; I don't care, we have bigger
+                // perf issues.
+                return_lookup.remove(&socket_id);
+
+                dprintln!("Terminated socket from return lookup: {}", socket_id);
             }
         }
 

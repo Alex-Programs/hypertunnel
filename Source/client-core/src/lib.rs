@@ -226,6 +226,16 @@ async fn tcp_handler_down(mut write_half: tokio::net::tcp::OwnedWriteHalf,
                     // Decrement counter
                     CLIENT_META_UPSTREAM.response_to_socks_bytes.fetch_sub(length as u32, Ordering::SeqCst);
 
+                    if length == 0 {
+                        // No point writing. Check that we're not meant to close, though.
+                        if data.do_green_terminate {
+                            // We've been told to close
+                            dprintln!("Closing writer for id {} due to green terminate at point of zero length", socket_id);
+                            return
+                        }
+                        continue
+                    }
+
                     match write_half.try_write(bytes) {
                         Ok(_) => {
                             // All is fine
@@ -233,15 +243,29 @@ async fn tcp_handler_down(mut write_half: tokio::net::tcp::OwnedWriteHalf,
                         },
                         Err(error) => {
                             // We can't write anymore. This should be propagated
-                            // up the yellow route
-                            yellow_route_record_error(socket_id, error.to_string()).await;
+                            // up the yellow route, unless we've already been told to close.
+                            if data.do_green_terminate {
+                                // We've already been told to close
+                                dprintln!("Closing writer for id {} due to simultaneous error and green terminate", socket_id);
+                                return
+                            } else {
+                                yellow_route_record_error(socket_id, error.to_string()).await;
+                                return;
+                            }
                         }
+                    }
+
+                    // Check if we've been told to close
+                    if data.do_green_terminate {
+                        // We've been told to close
+                        dprintln!("Closing writer for id {} due to green terminate", socket_id);
+                        return
                     }
                 },
                 None => {
                     // Message passer has disconnected due to green route closing
                     // Simply close this half of the socket
-
+                    dprintln!("Closing writer for id {} due to no data on passer due to (likely) green terminate on passer", socket_id);
                     write_half.shutdown().await.expect("Failed to shutdown socket at green route passer close");
 
                     // Now leave
@@ -289,6 +313,7 @@ async fn tcp_handler_up(mut read_half: tokio::net::tcp::OwnedReadHalf,
             if bytes_read == 0 {
                 // The socket was closed
                 upstream_msg.red_terminate = true;
+                upstream_msg.payload = Vec::with_capacity(0);
                 upstream_passer_send.send(upstream_msg).await.expect("Failed to send data to transit");
                 return
             }

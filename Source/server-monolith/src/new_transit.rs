@@ -157,16 +157,20 @@ pub async fn handle_session(
                                 .socket_down_to_coordinator_bytes
                                 .fetch_sub(payload_length_u32, Ordering::Relaxed);
 
-                            downstream_socket.payload.extend(message.payload);
-
+                            if message.do_green_terminate {
+                                downstream_socket.do_green_terminate = true; // It'll be removed later when we send the buffer back
+                            } else {
+                                downstream_socket.payload.extend(message.payload);
+                            }
+                            
                             no_received_http = false;
                         }
                         Err(e) => {
                             if e == tokio::sync::mpsc::error::TryRecvError::Empty {
                                 return;
                             } else if e == tokio::sync::mpsc::error::TryRecvError::Disconnected {
-                                dprintln!("TCP handler closed");
-                                // TODO handle this - remove from managed sockets etc
+                                // Terminate the socket
+                                downstream_socket.do_green_terminate = true;
                             }
                         }
                     }
@@ -211,6 +215,9 @@ pub async fn handle_session(
                 traffic_stats
                     .coordinator_down_to_http_buffer_bytes
                     .fetch_sub(buffer_size as u32, Ordering::Relaxed);
+
+                // Remove all sockets set to terminate
+                downstream_sockets.retain(|socket| !socket.do_green_terminate);
 
                 // Reset the buffer
                 for socket in &mut downstream_sockets { // NOTE: TODO: This will memory leak in a long enough period unless we have a timeout for unused sockets
@@ -413,9 +420,14 @@ async fn handle_tcp_down(
                 return;
             }
 
+            let mut do_term = false;
             if bytes_read == 0 {
-                // TODO handle socket close
-                return;
+                // Socket is closing. Send back a terminate message
+                downstream_msg.do_green_terminate = true;
+                downstream_msg.payload = Vec::with_capacity(0);
+                dprintln!("Socket {} is closing on green route", socket_id);
+
+                do_term = true;
             }
 
             // Trim array down to size
@@ -432,6 +444,10 @@ async fn handle_tcp_down(
             traffic_stats
                 .socket_down_to_coordinator_bytes
                 .fetch_add(payload_size, Ordering::Relaxed);
+
+            if do_term {
+                return;
+            }
         }
     }
 }
