@@ -273,6 +273,7 @@ async fn get_metadata(seq_num: u32) -> ClientMetaUpstream {
 async fn pull_handler(
     transit_socket: Arc<RwLock<TransitSocket>>,
     mut message_passer_passer: BroadcastReceiver<DownstreamBackpasser>,
+    mut blue_termination_send: FlumeSender<SocketID>,
 ) {
     // This will hold the return lookup and be populated by the messagePasserPassers
     let mut return_lookup: HashMap<SocketID, UnboundedSender<SocksSocketDownstream>> = HashMap::new();
@@ -341,10 +342,13 @@ async fn pull_handler(
         // Set the seq_num to the next one
         RECEIVED_SEQ_NUM.fetch_add(1, Ordering::SeqCst);
 
-        for mut socket in decoded.socks_sockets {
+        for socket in decoded.socks_sockets {
             // Do we need to send on a blue termination signal?
             if socket.do_blue_terminate {
-                // TODO finish this - use a message passer to inform the coordinator to wipe data and tell the reader to terminate
+                // Inform both sockets and coordinator to either terminate or remove data
+                blue_termination_send.send(socket.socket_id).unwrap();
+
+                // Do not remove from lookup etc: There may still be data to send back, this is only one side of the connection
             }
             let socket_id = socket.socket_id;
             let do_term = socket.do_green_terminate;
@@ -400,6 +404,8 @@ pub async fn handle_transit(
     transit_socket: Arc<RwLock<TransitSocket>>,
     mut upstream_passer_rcv: Receiver<UpStreamMessage>,
     message_passer_passer_send: Arc<BroadcastSender<DownstreamBackpasser>>,
+    blue_termination_send: FlumeSender<SocketID>,
+    blue_termination_receive: FlumeReceiver<SocketID>
 ) {
     // Spawn requisite push and pull handlers
     // Create a channel for the push handler to send to so that a random not-in-use push handler
@@ -426,11 +432,11 @@ pub async fn handle_transit(
     // Create the pull handlers
     for _ in 0..pull_client_count {
         let new_receiver = message_passer_passer_send.subscribe();
-        task::spawn(pull_handler(transit_socket.clone(), new_receiver));
+        task::spawn(pull_handler(transit_socket.clone(), new_receiver, blue_termination_send.clone()));
     }
 
     // TODO make this variable
-    let FORCE_SEND_BUFF_SIZE = 1024 * 256;
+    let FORCE_SEND_BUFF_SIZE = 1024 * 8192;
     let MODETIME = 10; // In milliseconds
 
     let mut last_upstream_time = Instant::now();
@@ -456,9 +462,6 @@ pub async fn handle_transit(
 
                 // Take away from socks_to_coordinator
                 CLIENT_META_UPSTREAM.socks_to_coordinator_bytes.fetch_sub(size, Ordering::Relaxed);
-
-                // Add in timing info
-                let now_ms = ms_since_epoch();
 
                 dprintln!("Gotten data to send up: {:?}", upstream);
                 
@@ -533,6 +536,19 @@ pub async fn handle_transit(
 
         // If we're above buff size
         if do_send {
+            // Wipe everything in the blue channel from the data - it can't be written so no point sending
+            loop {
+                let socket_id = match blue_termination_receive.try_recv() {
+                    Ok(socket_id) => socket_id,
+                    Err(_) => break,
+                };
+
+                // Do not remove from socks sockets: We still might want to receive from it
+
+                // Instead, just remove it from the send buffer. It's ok if we remove a red terminate - the writer's already dead
+                socks_sockets.retain(|x| x.socket_id != socket_id);
+            }
+
             // Send the buffer to the push handler
             push_passer_send.send_async(socks_sockets.clone()).await.unwrap();
             // Set recorded buffer size to 0

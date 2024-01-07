@@ -84,7 +84,7 @@ pub async fn handle_session(
         mpsc::UnboundedReceiver<DownStreamMessage>,
     > = HashMap::new();
 
-    let (blue_termination_sender, blue_termination_receiver) = mpsc::unbounded_channel();
+    let (blue_termination_sender, mut blue_termination_receiver) = mpsc::unbounded_channel();
 
     let mut yellow_informers: HashMap<SocketID, Arc<AtomicBool>> = HashMap::new();
 
@@ -187,6 +187,9 @@ pub async fn handle_session(
                         .unwrap();
 
                     downstream_socket.do_blue_terminate = true;
+
+                    // Remove from tcp_to_http handler
+                    stream_from_tcp_handlers.remove(&socket_id);
                 }
                 Err(e) => {
                     // Check if the channel is empty
