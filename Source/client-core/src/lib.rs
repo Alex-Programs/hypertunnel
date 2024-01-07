@@ -293,7 +293,16 @@ async fn tcp_handler_up(mut read_half: tokio::net::tcp::OwnedReadHalf,
     upstream_passer_send: Sender<UpStreamMessage>,
     blue_terminate_receive: flume::Receiver<SocketID>
 ) {
-    let mut msg_seq_num = 0;
+    // Send the first msg in order to get the socket open
+    let upstream_msg = UpStreamMessage {
+        socket_id,
+        dest_ip,
+        dest_port,
+        payload: Vec::with_capacity(0),
+        red_terminate: false,
+    };
+
+    upstream_passer_send.send(upstream_msg).await.expect("Failed to send initialising socket open data to transit");
 
     loop {
         let ready = read_half.ready(Interest::READABLE).await.expect("Failed to wait for socket to be ready");
@@ -342,8 +351,6 @@ async fn tcp_handler_up(mut read_half: tokio::net::tcp::OwnedReadHalf,
             // Send the data to transit
             CLIENT_META_UPSTREAM.socks_to_coordinator_bytes.fetch_add(bytes_read as u32, Ordering::Relaxed);
             upstream_passer_send.send(upstream_msg).await.expect("Failed to send data to transit");
-
-            msg_seq_num += 1;
         }
     }
 }
