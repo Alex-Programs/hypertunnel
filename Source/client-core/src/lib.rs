@@ -41,6 +41,8 @@ pub async fn begin_core_client(arguments: ClientArguments) {
     
     let message_passer_passer_send = Arc::new(message_passer_passer_send);
 
+    let (blue_terminate_send, _): (BroadcastSender<SocketID>, BroadcastReceiver<SocketID>) = broadcast::channel(100_000);
+
     // Cannot transfer threads
     let transit_socket = TransitSocketBuilder::new()
         .with_target(arguments.target_host)
@@ -67,6 +69,8 @@ pub async fn begin_core_client(arguments: ClientArguments) {
 
     // Now start the TCP listener in a task
     let moved_passer_passer = message_passer_passer_send.clone();
+    
+    let blue_terminate_for_listener = blue_terminate_send.clone();
     task::spawn(async move {
         let listener = TcpListener::bind((arguments.listen_address, arguments.listen_port)).await.expect("Failed to start TCP listener");
 
@@ -74,15 +78,15 @@ pub async fn begin_core_client(arguments: ClientArguments) {
             let (socket, _) = listener.accept().await.expect("Failed to accept connection");
 
             // Spawn a task to handle the connection
-            task::spawn(tcp_listener(socket, upstream_passer_send.clone(), moved_passer_passer.clone()));
+            task::spawn(tcp_listener(socket, upstream_passer_send.clone(), moved_passer_passer.clone(), blue_terminate_for_listener.clone()));
         }
     });
 
-    transit::handle_transit(transit_socket, upstream_passer_receive, message_passer_passer_send.clone()).await;
+    transit::handle_transit(transit_socket, upstream_passer_receive, message_passer_passer_send.clone(), blue_terminate_send).await;
 }
 
 #[allow(unused)]
-async fn tcp_listener(mut stream: TcpStream, upstream_passer_send: Sender<UpStreamMessage>, message_passer_passer_send: Arc<BroadcastSender<transit::DownstreamBackpasser>>) {
+async fn tcp_listener(mut stream: TcpStream, upstream_passer_send: Sender<UpStreamMessage>, message_passer_passer_send: Arc<BroadcastSender<transit::DownstreamBackpasser>>, blue_terminate_send: BroadcastSender<SocketID>) {
     const MAX_SOCKS_REQUEST_LENGTH: usize = 4096;
 
     // Read the first packet
@@ -218,7 +222,7 @@ async fn tcp_listener(mut stream: TcpStream, upstream_passer_send: Sender<UpStre
     let (mut read_half, mut write_half) = stream.into_split();
 
     // Spawn both tasks
-    task::spawn(tcp_handler_up(read_half, socket_id, dstip, dstport, upstream_passer_send.clone()));
+    task::spawn(tcp_handler_up(read_half, socket_id, dstip, dstport, upstream_passer_send.clone(), blue_terminate_send.subscribe()));
     task::spawn(tcp_handler_down(write_half, downstream_passer_receive, socket_id));
 }
 
@@ -301,11 +305,25 @@ async fn tcp_handler_up(mut read_half: tokio::net::tcp::OwnedReadHalf,
     dest_ip: libsocks::IPV4,
     dest_port: libsocks::Port,
     upstream_passer_send: Sender<UpStreamMessage>,
+    mut blue_terminate_receive: BroadcastReceiver<SocketID>
 ) {
     let mut msg_seq_num = 0;
 
     loop {
         let ready = read_half.ready(Interest::READABLE).await.expect("Failed to wait for socket to be ready");
+
+        loop {
+            let term_socket_id = match blue_terminate_receive.try_recv() {
+                Ok(socket_id) => socket_id,
+                Err(_) => break,
+            };
+
+            if term_socket_id == socket_id {
+                // We've been told to close
+                dprintln!("Closing reader for id {} due to blue terminate", socket_id);
+                return
+            }
+        }
 
         if ready.is_readable() {
             let mut upstream_msg = UpStreamMessage {
