@@ -2,7 +2,7 @@
 
 members = [
     "client-cli", 
-    "client-gui",
+    "hypertunnel_gui",
     "client-core",
     "libsocks",
     "libtransit",
