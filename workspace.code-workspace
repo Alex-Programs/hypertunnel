@@ -7,9 +7,6 @@
 			"path": "Source/libtransit"
 		},
 		{
-			"path": "Source/client-gui"
-		},
-		{
 			"path": "Source/client-core"
 		},
 		{
@@ -26,6 +23,9 @@
 		},
 		{
 			"path": "Source/server"
+		},
+		{
+			"path": "Source/hypertunnel_gui"
 		}
 	],
 	"settings": {}
