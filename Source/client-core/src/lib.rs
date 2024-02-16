@@ -62,7 +62,7 @@ pub async fn begin_core_client(arguments: ClientArguments) {
             println!("Connected to server!");
         }
         Err(error) => {
-            println!("Failed to connect to server: {:?}", error);
+            eprintln!("Failed to connect to server: {:?}", error);
             return;
         }
     }

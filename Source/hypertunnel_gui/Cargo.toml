@@ -12,6 +12,7 @@ eframe = { version = "0.26.0", default-features = false, features = [
     "glow",          # Use the glow rendering backend. Alternative: "wgpu".
     "persistence",   # Enable restoring app state when restarting the app.
 ] }
+egui_extras = {version = "0.26.2", features = ["all_loaders", "image", "file"]}
 log = "0.4"
 
 # You only need serde if you want app persistence:
