@@ -269,7 +269,6 @@ async fn upstream_data(
 
     // Get yellow sockets to close
     let yellow_sockets = upstream.metadata.yellow_to_stop_reading_from;
-    println!("Yellow sockets: {:?}", yellow_sockets);
 
     while actor.next_seq_num_up.load(Ordering::SeqCst) != seq_num {
         // Wait until that's the case
