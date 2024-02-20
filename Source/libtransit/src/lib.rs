@@ -1,5 +1,5 @@
 use rand::Rng; // Not unused - ignore vscode
-use borsh::{BorshSerialize, BorshDeserialize};
+use borsh::{BorshSerialize, BorshDeserialize, from_slice, to_vec};
 use std::collections::HashMap;
 
 #[cfg(test)]
@@ -14,7 +14,7 @@ static LAST_SOCKET_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU
 
 pub trait SerialMessage: BorshSerialize + BorshDeserialize {
     fn encoded(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        let data = self.try_to_vec()?;
+        let data = to_vec(self)?;
         Ok(data)
     }
 

@@ -2,12 +2,10 @@
 
 members = [
     "client-cli", 
-    "hypertunnel_gui",
     "client-core",
     "libsocks",
     "libtransit",
     "server-monolith",
-    "server",
     "libsecrets",
     "integration-tests"
 ]

@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 chacha20poly1305 = "0.10.1"
-generic-array = "0.14"
+generic-array = "1"
 sha2 = "0.10.7"
 
 [dev-dependencies]
