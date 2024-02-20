@@ -478,7 +478,8 @@ async fn handle_tcp_down(
             let bytes_read = match tcp_read_half.read(&mut downstream_msg.payload).await {
                 Ok(bytes_read) => bytes_read,
                 Err(e) => {
-                    panic!("Error reading from TCP stream: {:?}", e);
+                    send_green_terminate(to_http_stream, socket_id);
+                    return;
                 }
             };
 
