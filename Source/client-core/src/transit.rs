@@ -363,7 +363,13 @@ async fn pull_handler(
                     CLIENT_META_UPSTREAM.response_to_socks_bytes.fetch_add(size, Ordering::SeqCst);
 
                     // Send the message
-                    sender.send(socket).unwrap();
+                    match sender.send(socket) {
+                        Ok(_) => {}
+                        Err(_) => {
+                            // Remove the sender from the lookup
+                            return_lookup.remove(&socket_id);
+                        }
+                    };
                 }
                 None => {
                     // Populate the sender via iteration through the messagePasserPasser
@@ -374,14 +380,26 @@ async fn pull_handler(
                     }
 
                     // Try again
-                    let sender = return_lookup.get(&socket_id).unwrap();
+                    let sender = match return_lookup.get(&socket_id) {
+                        Some(sender) => sender,
+                        None => {
+                            // If we still don't have a sender, give up
+                            continue;
+                        }
+                    };
 
                     // Increment the counter
                     let size = socket.payload.len() as u32;
                     CLIENT_META_UPSTREAM.response_to_socks_bytes.fetch_add(size, Ordering::SeqCst);
 
                     // Send the message
-                    sender.send(socket).unwrap();
+                    match sender.send(socket) {
+                        Ok(_) => {}
+                        Err(_) => {
+                            // Remove the sender from the lookup
+                            return_lookup.remove(&socket_id);
+                        }
+                    };
                 }
             }
 
@@ -447,7 +465,7 @@ pub async fn handle_transit(
 
     loop {
         let delta  = Instant::now() - last_loop_time;
-        if delta > Duration::from_millis(3) {
+        if delta > Duration::from_millis(10) {
             println!("Transit took an unusual amount of time ({}ms) to iterate", delta.as_millis());
         }
         last_loop_time = Instant::now();

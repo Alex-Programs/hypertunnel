@@ -98,7 +98,7 @@ pub async fn handle_session(
         // Check how long the loop took
         let loop_time = last_iteration_time.elapsed();
         let loop_time_ms = loop_time.as_millis();
-        if loop_time_ms > 5 {
+        if loop_time_ms > 15 {
             // TODO handle this better
             println!("Coordinator took {}ms", loop_time_ms);
         }
@@ -306,11 +306,21 @@ pub async fn handle_session(
 
                 // Send the payload to the TCP handler
                 let msg_size = message.payload.len() as u32;
-                tcp_handler.send(message).unwrap();
+                match tcp_handler.send(message) {
+                    Ok(_) => {
+                        traffic_stats
+                         .coordinator_up_to_socket_bytes
+                         .fetch_add(msg_size, Ordering::Relaxed);
+                    }
+                    Err(e) => {
+                        println!("Error sending to TCP handler: {:?}", e);
 
-                traffic_stats
-                    .coordinator_up_to_socket_bytes
-                    .fetch_add(msg_size, Ordering::Relaxed);
+                        // There isn't really much we can do - the uploader is gone and should have already sent down a terminate message
+
+                        // Just continue
+                    }
+                }
+
                 traffic_stats
                     .http_up_to_coordinator_bytes
                     .fetch_sub(msg_size, Ordering::Relaxed);
@@ -386,8 +396,9 @@ async fn handle_tcp_up(
             let message = match from_http_stream.recv().await {
                 Some(message) => message,
                 None => {
-                    // TODO handle this better
-                    panic!("Error receiving from HTTP stream: {:?}", from_http_stream);
+                    // Qe need to close the socket
+                    send_down_blue_channel(blue_message_sender, socket_id);
+                    return;
                 }
             };
 
@@ -420,7 +431,13 @@ fn send_green_terminate(to_http_stream: mpsc::UnboundedSender<DownStreamMessage>
     };
 
     // Send the message
-    to_http_stream.send(downstream_msg).unwrap();
+    match to_http_stream.send(downstream_msg) {
+        Ok(_) => {}
+        Err(e) => {
+            // TODO handle this better
+            println!("Error sending green terminate: {:?}", e);
+        }
+    }
 }
 
 async fn handle_tcp_down(
@@ -478,6 +495,7 @@ async fn handle_tcp_down(
             let bytes_read = match tcp_read_half.read(&mut downstream_msg.payload).await {
                 Ok(bytes_read) => bytes_read,
                 Err(e) => {
+                    dprintln!("Sending green terminate due to error: {:?}", e);
                     send_green_terminate(to_http_stream, socket_id);
                     return;
                 }
@@ -526,8 +544,11 @@ pub async fn handle_tcp(
     let stream = match stream {
         Ok(stream) => stream,
         Err(e) => {
-            // TODO handle this better
-            panic!("Error connecting to TCP server: {:?}", e);
+            // Just close
+            dprintln!("Error connecting to {}:{}", ip, port);
+            send_green_terminate(to_http_stream, socket_id);
+
+            return;
         }
     };
 
