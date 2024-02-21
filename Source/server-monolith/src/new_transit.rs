@@ -515,8 +515,6 @@ async fn handle_tcp_down(
             // Trim array down to size
             downstream_msg.payload.truncate(bytes_read);
 
-            dprintln!("Read data: {:?}", downstream_msg.payload);
-
             // Send the message
             let payload_size = downstream_msg.payload.len() as u32;
 
