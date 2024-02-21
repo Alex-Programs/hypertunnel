@@ -332,8 +332,10 @@ async fn tcp_handler_up(mut read_half: tokio::net::tcp::OwnedReadHalf,
             let bytes_read = match read_half.read(&mut upstream_msg.payload).await {
                 Ok(bytes_read) => bytes_read,
                 Err(error) => {
-                    // TODO handle properly
-                    panic!("Failed to read from socket: {:?}", error);
+                    upstream_msg.red_terminate = true;
+                    upstream_msg.payload = Vec::with_capacity(0);
+                    upstream_passer_send.send(upstream_msg).await.expect("Failed to send data to transit");
+                    return;
                 }
             };
 
