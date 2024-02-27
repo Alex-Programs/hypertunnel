@@ -19,7 +19,7 @@ use simple_logger;
 use libtransit::{
     ClientMessageUpstream, DeclarationToken, ServerMessageDownstream,
     ServerMetaDownstream, SocketID, SocksSocketUpstream, SocksSocketDownstream, UnifiedPacketInfo,
-    ServerMetaDownstreamServerStats
+    ServerMetaDownstreamStats
 };
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -47,10 +47,8 @@ async fn form_meta_response(session_actor_storage: &SessionActorsStorage, seq_nu
     let traffic_stats = (*session_actor_storage.traffic_stats).into_server_meta_downstream_traffic_stats();
 
     ServerMetaDownstream {
-        packet_info: UnifiedPacketInfo { unix_ms: millis_time as u64, seq_num: seq_num },
-        server_stats: ServerMetaDownstreamServerStats { cpu_usage: 0.0, memory_usage_kb: 0 },
-        logs: Vec::new(),
-        traffic_stats,
+        packet_info: UnifiedPacketInfo { unix_ms: millis_time as u64, seq_num },
+        traffic_stats
     }
 }
 
@@ -416,7 +414,7 @@ async fn main() -> std::io::Result<()> {
 
     // Create users from configuration
     // Check if there are any users
-    if configuration.users.len() == 0 {
+    if configuration.users.ks_empty() {
         panic!("No users defined in configuration file!");
     }
 

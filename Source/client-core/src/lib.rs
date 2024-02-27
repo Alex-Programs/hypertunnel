@@ -320,7 +320,7 @@ async fn tcp_handler_up(mut read_half: tokio::net::tcp::OwnedReadHalf,
                 socket_id,
                 dest_ip,
                 dest_port,
-                payload: vec![0; 512], // TODO changeable
+                payload: vec![0; 512], // TODO changeable, try to reuse buffers
                 red_terminate: false,
             };
 
