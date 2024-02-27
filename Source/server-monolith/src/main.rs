@@ -81,6 +81,9 @@ async fn index() -> impl Responder {
 }
 
 #[get("/download")]
+#[get("/favicon.png")]
+#[get("/logo.png")]
+#[get("/stream.mp4")]
 async fn downstream_data(
     app_state: web::Data<AppState>,
     req: HttpRequest,
