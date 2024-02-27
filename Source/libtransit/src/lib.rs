@@ -110,8 +110,6 @@ pub struct ServerMessageDownstream {
 pub struct ServerMetaDownstream {
     pub packet_info: UnifiedPacketInfo,
     pub traffic_stats: ServerMetaDownstreamTrafficStats,
-    pub server_stats: ServerMetaDownstreamServerStats,
-    pub logs: Vec<ServerMetaDownstreamLog>,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
@@ -122,19 +120,6 @@ pub struct ServerMetaDownstreamTrafficStats {
     pub coordinator_down_to_http_message_passer_bytes: u32,
     pub coordinator_down_to_http_buffer_bytes: u32,
     pub congestion_ctrl_intake_throttle: u32,
-}
-
-#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
-pub struct ServerMetaDownstreamServerStats {
-    pub cpu_usage: f32,
-    pub memory_usage_kb: u32,
-}
-
-#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
-pub struct ServerMetaDownstreamLog {
-    timestamp: u64,
-    severity: ServerMetaDownstreamLogSeverity,
-    message: String,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
