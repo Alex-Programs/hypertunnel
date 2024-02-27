@@ -183,7 +183,7 @@ async fn tcp_listener(stream: TcpStream, upstream_passer_send: Sender<UpStreamMe
 
     match stream.try_write(&reply.to_binary()) {
         Ok(_) => {
-            info!("Said hello to client");
+            info!("Said hello to client on recv");
         },
         Err(error) => {
             error!("Failed to send reply to client: {:?}", error);
