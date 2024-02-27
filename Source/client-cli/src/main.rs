@@ -1,5 +1,6 @@
 use clientcore::{begin_core_client, ClientArguments};
-
+use simple_logger;
+use log::{info, Level};
 use clap::Parser;
 
 #[derive(Parser, Debug)]
@@ -17,11 +18,28 @@ struct Args {
 
     #[clap(long, default_value = "12345")]
     password: String,
+
+    #[clap(long, default_value = "info")]
+    log_level: String,
 }
 
 #[tokio::main]
 async fn main() {
     let arguments = Args::parse();
+
+    let level: Level = match arguments.log_level.to_lowercase().as_str() {
+        "trace" => Level::Trace,
+        "debug" => Level::Debug,
+        "info" => Level::Info,
+        "warn" => Level::Warn,
+        "error" => Level::Error,
+        _ => Level::Info,
+    };
+
+    simple_logger::set_up_color_terminal();
+    simple_logger::init_with_level(level).unwrap();
+
+    info!("Received arguments: {:?}", arguments);
 
     let client_args = ClientArguments {
         listen_address: arguments.listen_host,

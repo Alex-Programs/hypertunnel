@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use num_cpus;
+use log::{debug, error, info, trace, warn};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Config {
@@ -36,7 +37,7 @@ pub fn load_config() -> Config {
     let contents = match fs::read_to_string("server.config.toml") {
         Ok(contents) => contents,
         Err(_) => {
-            println!("No configuration file found, creating one...");
+            warn!("No configuration file found, creating one...");
             let config = Config::default();
             let toml = toml::to_string(&config).unwrap();
             fs::write("server.config.toml", toml).unwrap();

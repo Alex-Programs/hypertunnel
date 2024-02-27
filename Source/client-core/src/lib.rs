@@ -17,11 +17,7 @@ mod meta;
 use meta::CLIENT_META_UPSTREAM;
 use meta::YELLOW_DATA_UPSTREAM_QUEUE;
 
-#[allow(unused)]
-use debug_print::{
-    debug_eprint as deprint, debug_eprintln as deprintln, debug_print as dprint,
-    debug_println as dprintln,
-};
+use log::{debug, error, info, trace, warn};
 
 pub struct ClientArguments {
     pub listen_address: String,
@@ -59,10 +55,10 @@ pub async fn begin_core_client(arguments: ClientArguments) {
 
     match status {
         Ok(_) => {
-            println!("Connected to server!");
+            info!("Connected to server!");
         }
         Err(error) => {
-            eprintln!("Failed to connect to server: {:?}", error);
+            error!("Failed to connect to server: {:?}", error);
             return;
         }
     }
@@ -101,7 +97,7 @@ async fn tcp_listener(stream: TcpStream, upstream_passer_send: Sender<UpStreamMe
             }
         },
         Err(error) => {
-            println!("Failed to read from socket in initial SOCKS discussion: {:?}", error);
+            info!("Failed to read from socket in initial SOCKS discussion: {:?}", error);
             return;
         }
     }
@@ -128,7 +124,7 @@ async fn tcp_listener(stream: TcpStream, upstream_passer_send: Sender<UpStreamMe
                 libsocks::Socks4Request::Connect(connect_req) => {
                     // Sanity check
                     if connect_req.version != 4 {
-                        println!("Incorrect socks version ({}) from program {}", connect_req.version, connect_req.userid);
+                        warn!("Incorrect socks version ({}) from program {}", connect_req.version, connect_req.userid);
                         stream.writable().await.unwrap();
                         stream.try_write(&rejection_bytes).unwrap();
                         return;
@@ -140,7 +136,7 @@ async fn tcp_listener(stream: TcpStream, upstream_passer_send: Sender<UpStreamMe
                 libsocks::Socks4Request::Bind(bind_req) => {
                     // We don't support bind yet
                     let user_id = bind_req.userid;
-                    println!("Received bind request (unsupported) from user ID {}. Killing connection", user_id);
+                    error!("Received bind request (unsupported) from user ID {}. Killing connection", user_id);
                     stream.writable().await.unwrap();
                     stream.try_write(&rejection_bytes).unwrap();
                     return;
@@ -148,21 +144,24 @@ async fn tcp_listener(stream: TcpStream, upstream_passer_send: Sender<UpStreamMe
             }
         },
         Err(error) => {
-            println!("Failed to parse SOCKS request: {:?}", error);
+            error!("Failed to parse SOCKS request: {:?}", error);
             match stream.writable().await {
                 Ok(_) => {
-                    stream.try_write(&rejection_bytes).unwrap();
+                    let res = stream.try_write(&rejection_bytes);
+                    if res.is_err() {
+                        error!("Failed to send rejection to client: {:?}", res.err().unwrap());
+                    }
                 },
                 Err(error) => {
-                    println!("Failed to send rejection to client: {:?}", error);
+                    error!("Failed to send rejection to client: {:?}", error);
                 }
             };
             match stream.try_write(&rejection_bytes) {
                 Ok(_) => {
-                    println!("Sent rejection to client");
+                    info!("Sent rejection to client");
                 },
                 Err(error) => {
-                    println!("Failed to send rejection to client: {:?}", error);
+                    error!("Failed to send rejection to client: {:?}", error);
                 }
             }
 
@@ -184,10 +183,10 @@ async fn tcp_listener(stream: TcpStream, upstream_passer_send: Sender<UpStreamMe
 
     match stream.try_write(&reply.to_binary()) {
         Ok(_) => {
-            println!("Said hello to client");
+            info!("Said hello to client");
         },
         Err(error) => {
-            println!("Failed to send reply to client: {:?}", error);
+            error!("Failed to send reply to client: {:?}", error);
             return;
         }
     }
@@ -235,7 +234,7 @@ async fn tcp_handler_down(mut write_half: tokio::net::tcp::OwnedWriteHalf,
                         // No point writing. Check that we're not meant to close, though.
                         if data.do_green_terminate {
                             // We've been told to close
-                            dprintln!("Closing writer for id {} due to green terminate at point of zero length", socket_id);
+                            debug!("Closing writer for id {} due to green terminate at point of zero length", socket_id);
                             return
                         }
                         continue
@@ -244,14 +243,14 @@ async fn tcp_handler_down(mut write_half: tokio::net::tcp::OwnedWriteHalf,
                     match write_half.try_write(bytes) {
                         Ok(_) => {
                             // All is fine
-                            dprintln!("Sent {} bytes to client", length);
+                            debug!("Sent {} bytes to client", length);
                         },
                         Err(error) => {
                             // We can't write anymore. This should be propagated
                             // up the yellow route, unless we've already been told to close.
                             if data.do_green_terminate {
                                 // We've already been told to close
-                                dprintln!("Closing writer for id {} due to simultaneous error and green terminate", socket_id);
+                                debug!("Closing writer for id {} due to simultaneous error and green terminate", socket_id);
                                 return
                             } else {
                                 yellow_route_record_error(socket_id, error.to_string()).await;
@@ -263,14 +262,14 @@ async fn tcp_handler_down(mut write_half: tokio::net::tcp::OwnedWriteHalf,
                     // Check if we've been told to close
                     if data.do_green_terminate {
                         // We've been told to close
-                        dprintln!("Closing writer for id {} due to green terminate", socket_id);
+                        debug!("Closing writer for id {} due to green terminate", socket_id);
                         return
                     }
                 },
                 None => {
                     // Message passer has disconnected due to green route closing
                     // Simply close this half of the socket
-                    dprintln!("Closing writer for id {} due to no data on passer due to (likely) green terminate on passer", socket_id);
+                    debug!("Closing writer for id {} due to no data on passer due to (likely) green terminate on passer", socket_id);
                     write_half.shutdown().await.expect("Failed to shutdown socket at green route passer close");
 
                     // Now leave
@@ -282,7 +281,7 @@ async fn tcp_handler_down(mut write_half: tokio::net::tcp::OwnedWriteHalf,
 }
 
 async fn yellow_route_record_error(socket_id: SocketID, reason: String) {
-    dprintln!("Yellow route error on socket id {} : {}", socket_id, reason);
+    debug!("Yellow route error on socket id {} : {}", socket_id, reason);
 
     YELLOW_DATA_UPSTREAM_QUEUE.write().await.push(socket_id);
 }
@@ -308,18 +307,13 @@ async fn tcp_handler_up(mut read_half: tokio::net::tcp::OwnedReadHalf,
     loop {
         let ready = read_half.ready(Interest::READABLE).await.expect("Failed to wait for socket to be ready");
 
-        loop {
-            let term_socket_id = match blue_terminate_receive.try_recv() {
-                Ok(socket_id) => socket_id,
-                Err(_) => break,
-            };
-
+        while let Ok(term_socket_id) = blue_terminate_receive.try_recv() {
             if term_socket_id == socket_id {
                 // We've been told to close
-                dprintln!("Closing reader for id {} due to blue terminate", socket_id);
+                debug!("Closing reader for id {} due to blue terminate", socket_id);
                 return
             }
-        }
+        }        
 
         if ready.is_readable() {
             let mut upstream_msg = UpStreamMessage {
@@ -336,6 +330,7 @@ async fn tcp_handler_up(mut read_half: tokio::net::tcp::OwnedReadHalf,
                     upstream_msg.red_terminate = true;
                     upstream_msg.payload = Vec::with_capacity(0);
                     upstream_passer_send.send(upstream_msg).await.expect("Failed to send data to transit");
+                    debug!("Failed to read from socket: {:?}", error);
                     return;
                 }
             };

@@ -29,10 +29,7 @@ static SENT_SEQ_NUM: AtomicU32 = AtomicU32::new(0);
 
 use crate::meta::{CLIENT_META_UPSTREAM, ms_since_epoch, YELLOW_DATA_UPSTREAM_QUEUE};
 
-use debug_print::{
-    debug_eprint as deprint, debug_eprintln as deprintln, debug_print as dprint,
-    debug_println as dprintln,
-};
+use log::{debug, error, info, trace, warn};
 
 pub struct TransitSocket {
     pub target: String,                      // Base URL, incl. protocol
@@ -180,7 +177,7 @@ async fn push_handler(
 
     let timeout_duration = Duration::from_secs(timeout_time as u64);
 
-    dprintln!("Push handler started");
+    debug!("Push handler started");
 
     loop {
         // Get the data to send
@@ -234,7 +231,7 @@ async fn push_handler(
 
         let response = response.unwrap();
 
-        dprintln!("Sent! Response code {:?}, data: {:?}", response.status(), response.bytes().await);
+        debug!("Sent! Response code {:?}, data: {:?}", response.status(), response.bytes().await);
 
         // TODO if things go wrong, prevent the arrival of new data until the send works. See working nicely section of todo about reconstruction and error handling.
     }
@@ -265,7 +262,7 @@ async fn get_metadata(seq_num: u32) -> ClientMetaUpstream {
         yellow_to_stop_reading_from,
     };
 
-    dprintln!("Sending metadata: {:?}", data);
+    debug!("Sending metadata: {:?}", data);
 
     data
 }
@@ -321,7 +318,7 @@ async fn pull_handler(
         // Read the response
         let response = response.unwrap();
 
-        dprintln!("Pull response status: {}", response.status());
+        debug!("Pull response status: {}", response.status());
 
         // Get the data
         let encrypted = response.bytes().await.unwrap();
@@ -409,12 +406,12 @@ async fn pull_handler(
                 // perf issues.
                 return_lookup.remove(&socket_id);
 
-                dprintln!("Terminated socket from return lookup: {}", socket_id);
+                debug!("Terminated socket from return lookup: {}", socket_id);
             }
         }
 
         // Print stats
-        dprintln!("Meta stats: {:?}", CLIENT_META_UPSTREAM.as_base());
+        debug!("Meta stats: {:?}", CLIENT_META_UPSTREAM.as_base());
     }
 }
 
@@ -465,8 +462,8 @@ pub async fn handle_transit(
 
     loop {
         let delta  = Instant::now() - last_loop_time;
-        if delta > Duration::from_millis(10) {
-            println!("Transit took an unusual amount of time ({}ms) to iterate", delta.as_millis());
+        if delta > Duration::from_millis(12) {
+            warn!("Transit took an unusual amount of time ({}ms) to iterate", delta.as_millis());
         }
         last_loop_time = Instant::now();
 
@@ -481,7 +478,7 @@ pub async fn handle_transit(
                 // Take away from socks_to_coordinator
                 CLIENT_META_UPSTREAM.socks_to_coordinator_bytes.fetch_sub(size, Ordering::Relaxed);
 
-                dprintln!("Gotten data to send up: {:?}", upstream);
+                debug!("Gotten data to send up: {:?}", upstream);
                 
                 // Find the relevant socks socket to insert into
                 let mut found = false;
@@ -528,7 +525,7 @@ pub async fn handle_transit(
                         let delta = end_time - start_time;
                         let delta_ms = delta.as_millis();
                         if delta_ms > 10 {
-                            eprintln!("Took {}ms to sleep targeted 1ms", delta_ms);
+                            warn!("Took {}ms to sleep targeted 1ms", delta_ms);
                         }
                     }
                     TryRecvError::Disconnected => {
@@ -541,14 +538,14 @@ pub async fn handle_transit(
 
         let mut do_send = false;
         if current_buffer_size > FORCE_SEND_BUFF_SIZE {
-            println!("Sending on due to buffer size {} being greater than {}", current_buffer_size, FORCE_SEND_BUFF_SIZE);
+            debug!("Sending on due to buffer size {} being greater than {}", current_buffer_size, FORCE_SEND_BUFF_SIZE);
             do_send = true;
         }
 
         if last_upstream_time.elapsed().as_millis() > MODETIME
             && current_buffer_size > 0
         {
-            println!("Sending on due to modetime");
+            debug!("Sending on due to modetime");
             do_send = true;
         }
 
