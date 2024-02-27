@@ -82,15 +82,6 @@ fn test_server_message_downstream() {
                 coordinator_down_to_http_buffer_bytes: 0,
                 congestion_ctrl_intake_throttle: 0,
             },
-            server_stats: ServerMetaDownstreamStats {
-                cpu_usage: 0.0,
-                memory_usage_kb: 0,
-            },
-            logs: vec![ServerMetaDownstreamLog {
-                timestamp: 0,
-                severity: ServerMetaDownstreamLogSeverity::Info,
-                message: "test".to_string(),
-            }],
         },
         socks_sockets: vec![SocksSocketDownstream {
             socket_id: 0,
