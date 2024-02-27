@@ -12,10 +12,7 @@ use tokio::net::TcpStream;
 
 use libsecrets::EncryptionKey;
 
-use debug_print::{
-    debug_eprint as deprint, debug_eprintln as deprintln, debug_print as dprint,
-    debug_println as dprintln,
-};
+use log::{debug, error, info, trace, warn};
 
 use crate::meta;
 use std::sync::atomic::AtomicU32;
@@ -100,7 +97,7 @@ pub async fn handle_session(
         let loop_time_ms = loop_time.as_millis();
         if loop_time_ms > 15 {
             // TODO handle this better
-            println!("Coordinator took {}ms", loop_time_ms);
+            info!("Coordinator took {}ms", loop_time_ms);
         }
         last_iteration_time = Instant::now();
 
@@ -205,11 +202,11 @@ pub async fn handle_session(
 
         // Check if we should return the buffer
         let should_return = if buffer_size > 128 * 1024 {
-            dprintln!("Returning; Buffer size is {}", buffer_size);
+            debug!("Returning; Buffer size is {}", buffer_size);
             true
         } else if last_return_time.elapsed() > Duration::from_millis(10) {
             if buffer_size > 0 {
-                dprintln!("Returning; Time since last return is {:?}", last_return_time.elapsed());
+                debug!("Returning; Time since last return is {:?}", last_return_time.elapsed());
 
                 last_return_time = Instant::now();
 
@@ -313,7 +310,7 @@ pub async fn handle_session(
                          .fetch_add(msg_size, Ordering::Relaxed);
                     }
                     Err(e) => {
-                        println!("Error sending to TCP handler: {:?}", e);
+                        info!("Error sending to TCP handler: {:?}", e);
 
                         // There isn't really much we can do - the uploader is gone and should have already sent down a terminate message
 
@@ -353,7 +350,7 @@ pub async fn handle_session(
 
 // TODO
 fn send_down_blue_channel(blue_message_sender: mpsc::UnboundedSender<SocketID>, socket_id: SocketID) {
-    dprintln!("Socket {} is closing on blue route", socket_id);
+    debug!("Socket {} is closing on blue route", socket_id);
 
     // Send the message
     blue_message_sender.send(socket_id).unwrap();
@@ -410,7 +407,7 @@ async fn handle_tcp_up(
             // Write payload
             tcp_write_half.write_all(&message.payload).await.unwrap();
 
-            dprintln!("Written to the stream");
+            debug!("Written to the stream");
 
             // Check if we should terminate
             if message.red_terminate {
@@ -422,7 +419,7 @@ async fn handle_tcp_up(
 }
 
 fn send_green_terminate(to_http_stream: mpsc::UnboundedSender<DownStreamMessage>, socket_id: SocketID) {
-    dprintln!("Socket {} is closing on green route", socket_id);
+    debug!("Socket {} is closing on green route", socket_id);
 
     let downstream_msg = DownStreamMessage {
         socket_id,
@@ -435,7 +432,7 @@ fn send_green_terminate(to_http_stream: mpsc::UnboundedSender<DownStreamMessage>
         Ok(_) => {}
         Err(e) => {
             // TODO handle this better
-            println!("Error sending green terminate: {:?}", e);
+            error!("Error sending green terminate: {:?}", e);
         }
     }
 }
@@ -449,14 +446,14 @@ async fn handle_tcp_down(
 ) {
     loop {
         if yellow_informer.load(Ordering::Relaxed) {
-            dprintln!("Socket {} is yellow, closing", socket_id);
+            debug!("Socket {} is yellow, closing", socket_id);
             return;
         }
 
         let ready = tcp_read_half.ready(Interest::READABLE).await;
 
         if yellow_informer.load(Ordering::Relaxed) {
-            dprintln!("Socket {} is yellow, closing", socket_id);
+            debug!("Socket {} is yellow, closing", socket_id);
             return;
         }
 
@@ -495,14 +492,14 @@ async fn handle_tcp_down(
             let bytes_read = match tcp_read_half.read(&mut downstream_msg.payload).await {
                 Ok(bytes_read) => bytes_read,
                 Err(e) => {
-                    dprintln!("Sending green terminate due to error: {:?}", e);
+                    debug!("Sending green terminate due to error: {:?}", e);
                     send_green_terminate(to_http_stream, socket_id);
                     return;
                 }
             };
 
             if yellow_informer.load(Ordering::Relaxed) {
-                dprintln!("Socket {} is yellow, closing", socket_id);
+                debug!("Socket {} is yellow, closing", socket_id);
                 return;
             }
 
@@ -543,7 +540,7 @@ pub async fn handle_tcp(
         Ok(stream) => stream,
         Err(e) => {
             // Just close
-            dprintln!("Error connecting to {}:{}", ip, port);
+            debug!("Error connecting to {}:{} (Error: {:?})", ip, port, e);
             send_green_terminate(to_http_stream, socket_id);
 
             return;

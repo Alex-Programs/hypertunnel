@@ -5,10 +5,7 @@ use libsecrets::{self, EncryptionKey};
 use rand::Rng;
 use libtransit::SerialMessage;
 
-use debug_print::{
-    debug_eprint as deprint, debug_eprintln as deprintln, debug_print as dprint,
-    debug_println as dprintln,
-};
+use log::{debug, error, info, trace, warn};
 
 use dashmap::DashMap;
 
@@ -16,6 +13,8 @@ mod config;
 mod new_transit;
 use new_transit::SessionActorsStorage;
 mod meta;
+
+use simple_logger;
 
 use libtransit::{
     ClientMessageUpstream, DeclarationToken, ServerMessageDownstream,
@@ -56,7 +55,7 @@ async fn form_meta_response(session_actor_storage: &SessionActorsStorage, seq_nu
 }
 
 fn parse_token(token_hex: String) -> Option<DeclarationToken> {
-    dprintln!("Hex token: {}", token_hex);
+    debug!("Hex token: {}", token_hex);
 
     // Convert to bytes
     let token_bytes = hex::decode(token_hex).unwrap();
@@ -64,14 +63,14 @@ fn parse_token(token_hex: String) -> Option<DeclarationToken> {
     // Check it's the correct length
     if token_bytes.len() != 16 {
         // Return 404
-        dprintln!("Token is not 16 bytes!");
+        debug!("Token is not 16 bytes!");
         return None;
     }
 
     // Convert to array
     let token: DeclarationToken = token_bytes[..16].try_into().unwrap();
 
-    dprintln!("Token correct!: {:?}", token);
+    debug!("Token correct!: {:?}", token);
 
     // Implicit return
     Some(token)
@@ -89,7 +88,7 @@ async fn downstream_data(
     req: HttpRequest,
     body_bytes: Bytes,
 ) -> impl Responder {
-    dprintln!("Received request to download");
+    debug!("Received request to download");
 
     // Get token
     let token = req.cookie("token");
@@ -100,14 +99,14 @@ async fn downstream_data(
                 Some(token) => token,
                 None => {
                     // Return 404 - resist active probing by not telling the client what went wrong
-                    dprintln!("Token is invalid!");
+                    warn!("Received token {} is invalid!", token.value());
                     return HttpResponse::NotFound().body("No page exists");
                 }
             }
         }
         None => {
             // Return 404 - resist active probing by not telling the client what went wrong
-            dprintln!("No token (client identifier) supplied!");
+            warn!("No token supplied in download req!");
             return HttpResponse::NotFound().body("No page exists");
         }
     };
@@ -116,7 +115,7 @@ async fn downstream_data(
     let actor = app_state.actor_lookup.get(&token);
     if actor.is_none() {
         // Return 404 - resist active probing by not telling the client what went wrong
-        dprintln!("No session found for token!");
+        warn!("No session found for token with hex representation {} in download!", hex::encode(token));
         return HttpResponse::NotFound().body("No page exists");
     }
     let actor = actor.unwrap();
@@ -131,7 +130,7 @@ async fn downstream_data(
         Ok(decrypted) => decrypted, // If it succeeds, pull out content from Result<>
         Err(_) => {
             // Return 404 - resist active probing by not telling the client what went wrong
-            dprintln!("Failed to decrypt body!");
+            warn!("Failed to decrypt download message body; returning 404");
             return HttpResponse::NotFound().body("No page exists");
         }
     };
@@ -142,7 +141,7 @@ async fn downstream_data(
             Ok(upstream) => upstream, // If it succeeds, pull out content from Result<>
             Err(_) => {
                 // Return 404 - resist active probing by not telling the client what went wrong
-                dprintln!("Failed to parse decrypted body into ClientMessageUpstream");
+                warn!("Failed to parse decrypted download body into ClientMessageUpstream; returning 404");
                 return HttpResponse::NotFound().body("No page exists");
             }
         };
@@ -155,7 +154,7 @@ async fn downstream_data(
             Ok(return_messages) => return_messages,
             Err(_) => {
                 // Return 404 - resist active probing by not telling the client what went wrong
-                dprintln!("Failed to receive messages from actor!");
+                warn!("Failed to receive messages from actor in download; returning 404");
                 return HttpResponse::NotFound().body("No page exists");
             }
         }
@@ -169,7 +168,7 @@ async fn downstream_data(
 
     actor.traffic_stats.coordinator_down_to_http_message_passer_bytes.fetch_sub(return_msgs_bytes as u32, Ordering::Relaxed);
 
-    dprintln!("Returning data: {:?}", downstream_socks_sockets);
+    debug!("Returning data: {:?}", downstream_socks_sockets);
 
     // Get meta information
     let meta = form_meta_response(&actor, actor.seq_num_down.fetch_add(1, Ordering::SeqCst)).await;
@@ -197,7 +196,7 @@ async fn upstream_data(
     req: HttpRequest,
     body_bytes: Bytes,
 ) -> impl Responder {
-    dprintln!("Received request to upload");
+    debug!("Received request to upload");
 
     // Get token
     let token = req.cookie("token");
@@ -208,14 +207,14 @@ async fn upstream_data(
                 Some(token) => token,
                 None => {
                     // Return 404 - resist active probing by not telling the client what went wrong
-                    dprintln!("Token is invalid!");
+                    warn!("Received token {} is invalid!", token.value());
                     return HttpResponse::NotFound().body("No page exists");
                 }
             }
         }
         None => {
             // Return 404 - resist active probing by not telling the client what went wrong
-            dprintln!("No token (client identifier) supplied!");
+            warn!("No token supplied in upload req!");
             return HttpResponse::NotFound().body("No page exists");
         }
     };
@@ -224,34 +223,26 @@ async fn upstream_data(
     let actor = app_state.actor_lookup.get(&token);
     if actor.is_none() {
         // Return 404 - resist active probing by not telling the client what went wrong
-        dprintln!("No session found for token!");
+        warn!("No session found for token with hex representation {} in upload!", hex::encode(token));
         return HttpResponse::NotFound().body("No page exists");
     }
 
     let actor = actor.unwrap();
 
-    dprintln!("Got actor");
-
     // Get body
     let body = body_bytes;
 
-    dprintln!("Got body");
-
     // Decrypt body
     let key = actor.key;
-
-    dprintln!("Got key");
 
     let mut decrypted = match libsecrets::decrypt(&body, &key) {
         Ok(decrypted) => decrypted, // If it succeeds, pull out content from Result<>
         Err(_) => {
             // Return 404 - resist active probing by not telling the client what went wrong
-            dprintln!("Failed to decrypt body!");
+            warn!("Failed to decrypt upload message body; returning 404");
             return HttpResponse::NotFound().body("No page exists");
         }
     };
-
-    dprintln!("Decrypted data");
 
     // Parse into ClientMessageUpstream
     let upstream: ClientMessageUpstream =
@@ -259,7 +250,7 @@ async fn upstream_data(
             Ok(upstream) => upstream, // If it succeeds, pull out content from Result<>
             Err(_) => {
                 // Return 404 - resist active probing by not telling the client what went wrong
-                dprintln!("Failed to parse decrypted body into ClientMessageUpstream");
+                warn!("Failed to parse decrypted upload body into ClientMessageUpstream; returning 404");
                 return HttpResponse::NotFound().body("No page exists");
             }
         };
@@ -277,7 +268,7 @@ async fn upstream_data(
     }
 
     // Send on to actor
-    dprintln!("Sending on messages to actor...");
+    debug!("Sending on messages to actor...");
     {
         let to_bundler = &actor.to_bundler_stream;
 
@@ -290,10 +281,6 @@ async fn upstream_data(
         }
 
         actor.next_seq_num_up.store(seq_num + 1, Ordering::SeqCst);
-
-        dprintln!("Sent on messages to actor");
-
-        dprintln!("Did not send on close socket msgs");
     }
 
     // Get meta information
@@ -323,7 +310,7 @@ async fn client_greeting(
     req: HttpRequest,
     body_bytes: Bytes,
 ) -> impl Responder {
-    dprintln!("Received request to /submit");
+    info!("Received request to /submit (client hello)");
     
     // Get token
     let token = req.cookie("token");
@@ -334,14 +321,14 @@ async fn client_greeting(
                 Some(token) => token,
                 None => {
                     // Return 404 - resist active probing by not telling the client what went wrong
-                    dprintln!("Token is invalid!");
+                    warn!("Received token {} is invalid for client hello!", token.value());
                     return HttpResponse::NotFound().body("No page exists");
                 }
             }
         }
         None => {
             // Return 404 - resist active probing by not telling the client what went wrong
-            dprintln!("No token (client identifier) supplied!");
+            warn!("No token supplied in client hello req!");
             return HttpResponse::NotFound().body("No page exists");
         }
     };
@@ -368,11 +355,11 @@ async fn client_greeting(
         if decrypted.contains(&"Hello. Protocol version: 2".to_string()) {
             // Set key
             key = Some(user.key.clone()); // We've found it!
-            dprintln!("Key found! User: {}", user.name);
-            dprintln!("Decrypted data: {}", decrypted);
+            info!("Key found! User: {}", user.name);
+            info!("Decrypted data: {}", decrypted);
             break;
         } else {
-            dprintln!("Data decrypted, but does not contain client hello!");
+            warn!("Data decrypted, but does not contain client hello!");
         }
     }
 
@@ -381,7 +368,7 @@ async fn client_greeting(
         Some(key) => key,
         None => {
             // Return 404
-            dprintln!("No key found!");
+            warn!("No key found in client hello!");
             return HttpResponse::NotFound().body("No page exists");
         }
     };
@@ -404,14 +391,16 @@ async fn client_greeting(
         }
     };
 
-    dprintln!("Formed response: {:?}", encrypted);
+    debug!("Formed response: {:?}", encrypted);
 
     // Create actor
     let actor_storage = new_transit::create_actor(&key, token).await;
     // Add to sessions
     app_state.actor_lookup.insert(token, actor_storage);
 
-    dprintln!("Added session to sessions; returning response");
+    debug!("Added session to sessions; returning response");
+
+    info!("Client hello successful!");
 
     // Return encrypted response
     HttpResponse::Ok().body(encrypted)
@@ -419,7 +408,10 @@ async fn client_greeting(
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    println!("Loading configuration...");
+    simple_logger::set_up_color_terminal();
+    simple_logger::init_with_env().unwrap();
+
+    info!("Loading configuration...");
     let configuration = config::load_config();
 
     // Create users from configuration
@@ -428,7 +420,7 @@ async fn main() -> std::io::Result<()> {
         panic!("No users defined in configuration file!");
     }
 
-    println!("Hashing user keys...");
+    info!("Hashing user keys...");
     let mut users = Vec::new();
     for user in &configuration.users {
         // Check for malformed config
@@ -458,7 +450,7 @@ async fn main() -> std::io::Result<()> {
             key,
         });
 
-        println!("Derived key for user '{}'", user.name);
+        info!("Derived key for user '{}'", user.name);
     }
 
     let appstate = web::Data::new(AppState {
@@ -467,7 +459,7 @@ async fn main() -> std::io::Result<()> {
         actor_lookup: DashMap::new()
     });
 
-    println!(
+    info!(
         "Starting server at {}:{} with {} workers",
         configuration.host, configuration.port, configuration.workers
     );
