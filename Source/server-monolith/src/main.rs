@@ -80,14 +80,12 @@ async fn index() -> impl Responder {
     HttpResponse::Ok().body("Hello world!")
 }
 
-#[get("/download")]
-#[get("/favicon.png")]
-#[get("/logo.png")]
-#[get("/stream.mp4")]
+#[get("/video/segment/{}")]
 async fn downstream_data(
     app_state: web::Data<AppState>,
     req: HttpRequest,
     body_bytes: Bytes,
+    segment_name: web::Path<String>,
 ) -> impl Responder {
     debug!("Received request to download");
 
@@ -188,14 +186,15 @@ async fn downstream_data(
     let encrypted = libsecrets::encrypt(&response_bytes, &key).unwrap(); // TODO handle error
 
     // Return response
-    HttpResponse::Ok().body(encrypted)
+    HttpResponse::Ok().body(encrypted).with_header(("Content-Type", "application/octet-stream"))
 }
 
-#[post("/upload")]
+#[post("/upload/segment/{}")]
 async fn upstream_data(
     app_state: web::Data<AppState>,
     req: HttpRequest,
     body_bytes: Bytes,
+    segment_name: web::Path<String>,
 ) -> impl Responder {
     debug!("Received request to upload");
 
