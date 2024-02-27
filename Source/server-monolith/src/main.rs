@@ -19,7 +19,6 @@ use simple_logger;
 use libtransit::{
     ClientMessageUpstream, DeclarationToken, ServerMessageDownstream,
     ServerMetaDownstream, SocketID, SocksSocketUpstream, SocksSocketDownstream, UnifiedPacketInfo,
-    ServerMetaDownstreamStats
 };
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -80,7 +79,7 @@ async fn index() -> impl Responder {
     HttpResponse::Ok().body("Hello world!")
 }
 
-#[get("/video/segment/{}")]
+#[get("/video/segment/{tail:.*}")]
 async fn downstream_data(
     app_state: web::Data<AppState>,
     req: HttpRequest,
@@ -186,10 +185,10 @@ async fn downstream_data(
     let encrypted = libsecrets::encrypt(&response_bytes, &key).unwrap(); // TODO handle error
 
     // Return response
-    HttpResponse::Ok().body(encrypted).with_header(("Content-Type", "application/octet-stream"))
+    HttpResponse::Ok().body(encrypted)
 }
 
-#[post("/upload/segment/{}")]
+#[post("/upload/segment/{tail:.*}")]
 async fn upstream_data(
     app_state: web::Data<AppState>,
     req: HttpRequest,
@@ -416,7 +415,7 @@ async fn main() -> std::io::Result<()> {
 
     // Create users from configuration
     // Check if there are any users
-    if configuration.users.ks_empty() {
+    if configuration.users.is_empty() {
         panic!("No users defined in configuration file!");
     }
 
