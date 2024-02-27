@@ -179,6 +179,8 @@ async fn tcp_listener(mut stream: TcpStream, upstream_passer_send: Sender<UpStre
                     println!("Failed to send rejection to client: {:?}", error);
                 }
             }
+
+            return;
         }
     }
 

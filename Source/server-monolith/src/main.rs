@@ -365,7 +365,7 @@ async fn client_greeting(
         };
 
         // Check if decrypted data contains "Hello!"
-        if decrypted.contains(&"Hello. Protocol version:".to_string()) {
+        if decrypted.contains(&"Hello. Protocol version: 2".to_string()) {
             // Set key
             key = Some(user.key.clone()); // We've found it!
             dprintln!("Key found! User: {}", user.name);

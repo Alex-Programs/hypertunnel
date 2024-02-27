@@ -79,7 +79,7 @@ pub async fn connect(transit_socket: Arc<RwLock<TransitSocket>>) -> Result<(), T
 async fn greet_server(transit_socket: Arc<RwLock<TransitSocket>>) -> Result<(), TransitInitError> {
     let mut data = format!(
         "Hello. Protocol version: {}, client-transit version: {}, client-name: {}",
-        "0",
+        "2",
         env!("CARGO_PKG_VERSION"),
         transit_socket.read().await.client_name
     );
