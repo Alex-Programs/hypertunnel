@@ -151,6 +151,7 @@ fn generate_headers(client_identifier: String, referer: String) -> HeaderMap {
     headers.insert("Sec-Fetch-Site", HeaderValue::from_str("same-origin").unwrap());
     headers.insert("TE", HeaderValue::from_str("trailers").unwrap());
     headers.insert("User-Agent", HeaderValue::from_str("Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/115.0").unwrap());
+    headers.insert("Content-Type", HeaderValue::from_str("application/octet-stream").unwrap());
 
     headers
 }

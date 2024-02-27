@@ -70,6 +70,11 @@ pub async fn connect(transit_socket: Arc<RwLock<TransitSocket>>) -> Result<(), T
     Ok(())
 }
 
+fn generate_nonsense_data() -> String {
+    let mut rng = rand::thread_rng();
+    (0..128).map(|_| rng.gen::<char>()).collect()
+}
+
 // TODO this is unusual traffic, not very believable.
 // Change this to "Get a PNG image" incl. header etc, with the
 // encrypted data being some form of additional token in the cookies
@@ -217,9 +222,11 @@ async fn push_handler(
             encrypted
         }).await.unwrap();
 
+        let url = format!("{}/upload/segment/{}", target, generate_nonsense_data());
+
         // Send the data
         let response = client
-            .post(&format!("{}/upload", target))
+            .post(url)
             .body(to_send)
             .headers(headers.clone())
             .timeout(timeout_duration) // TODO RM
@@ -306,9 +313,11 @@ async fn pull_handler(
             encrypted
         };
 
+        let url = format!("{}/video/segment/{}", target, generate_nonsense_data());
+
         // Send the data
         let response = client
-            .get(&format!("{}/download", target))
+            .get(url)
             .body(to_send)
             .headers(headers.clone())
             .timeout(timeout_duration)
