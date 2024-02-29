@@ -19,6 +19,15 @@ struct Args {
     #[clap(long, default_value = "12345")]
     password: String,
 
+    #[clap(long, default_value = "8")]
+    push_client_count: usize,
+
+    #[clap(long, default_value = "8")]
+    pull_client_count: usize,
+
+    #[clap(long, default_value = "128")]
+    timeout_time_s: usize,
+
     #[clap(long, default_value = "info")]
     log_level: String,
 }
@@ -46,6 +55,10 @@ async fn main() {
         listen_port: arguments.listen_port,
         target_host: arguments.target_host,
         password: arguments.password,
+        push_client_count: arguments.push_client_count,
+        pull_client_count: arguments.pull_client_count,
+        timeout_time_s: arguments.timeout_time_s,
+        client_name: "Client CLI via Client Core".to_string(),
     };
 
     begin_core_client(client_args).await;

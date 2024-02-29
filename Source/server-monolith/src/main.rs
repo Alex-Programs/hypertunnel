@@ -14,6 +14,8 @@ mod new_transit;
 use new_transit::SessionActorsStorage;
 mod meta;
 
+use scan_fmt::scan_fmt;
+
 use simple_logger;
 
 use libtransit::{
@@ -356,6 +358,29 @@ async fn client_greeting(
             key = Some(user.key.clone()); // We've found it!
             info!("Key found! User: {}", user.name);
             info!("Decrypted data: {}", decrypted);
+
+            // Parse out the properties
+            let (protocol_version, client_transit_version, client_name) = match scan_fmt!(
+                &decrypted,
+                "Hello. Protocol version: {}, client-transit version: {}, client-name: {}",
+                String,
+                String,
+                String
+            ) {
+                Ok((protocol_version, client_transit_version, client_name)) => {
+                    (protocol_version, client_transit_version, client_name)
+                }
+                Err(e) => {
+                    // Return 404
+                    warn!("Failed to parse client hello! Error {:?}", e);
+                    return HttpResponse::NotFound().body("No page exists");
+                }
+            };
+
+            println!("Protocol version: {}", protocol_version);
+            println!("Client transit version: {}", client_transit_version);
+            println!("Client name: {}", client_name);
+
             break;
         } else {
             warn!("Data decrypted, but does not contain client hello!");
