@@ -324,6 +324,19 @@ async fn pull_handler(
             .send()
             .await;
 
+        // Check if it's a timeout
+        if response.is_err() && response.as_ref().unwrap().is_timeout() {
+            // Wait 5ms
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            continue;
+        }
+
+        if response.is_err() {
+            // TODO handle this
+            error!("Pull request failed: {:?}", response);
+            continue;
+        }
+
         // Read the response
         let response = response.unwrap();
 
