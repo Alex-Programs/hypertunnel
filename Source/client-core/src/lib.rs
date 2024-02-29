@@ -24,6 +24,10 @@ pub struct ClientArguments {
     pub listen_port: u16,
     pub target_host: String,
     pub password: String,
+    pub push_client_count: usize,
+    pub pull_client_count: usize,
+    pub timeout_time_s: usize,
+    pub client_name: String,
 }
 
 // Core of the client program for now. See Obsidian
@@ -43,10 +47,10 @@ pub async fn begin_core_client(arguments: ClientArguments) {
     let transit_socket = TransitSocketBuilder::new()
         .with_target(arguments.target_host)
         .with_password(arguments.password)
-        .with_client_name("Client-Core".to_string())
-        .with_timeout_time(5 * 60) // Temporary till streaming is in - TODO
-        .with_pull_client_count(8)
-        .with_push_client_count(8)
+        .with_client_name(arguments.client_name)
+        .with_timeout_time(arguments.timeout_time_s)
+        .with_pull_client_count(arguments.pull_client_count)
+        .with_push_client_count(arguments.push_client_count)
         .build();
 
     let transit_socket = Arc::new(RwLock::new(transit_socket));

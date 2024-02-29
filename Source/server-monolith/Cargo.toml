@@ -31,3 +31,5 @@ toml = "0.8"
 
 log = "0.4"
 simple_logger = "4.3"
+
+scan_fmt = "0.2.6"
