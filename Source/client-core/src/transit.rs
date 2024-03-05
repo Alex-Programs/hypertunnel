@@ -71,8 +71,17 @@ pub async fn connect(transit_socket: Arc<RwLock<TransitSocket>>) -> Result<(), T
 }
 
 fn generate_nonsense_data() -> String {
+    let dataset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let count = 64;
+
     let mut rng = rand::thread_rng();
-    (0..128).map(|_| rng.gen::<char>()).collect()
+    let mut data = String::with_capacity(count);
+    for _ in 0..count {
+        let index = rng.gen_range(0..dataset.len());
+        data.push(dataset.chars().nth(index).unwrap());
+    }
+
+    data
 }
 
 // TODO this is unusual traffic, not very believable.
@@ -297,6 +306,9 @@ async fn pull_handler(
 
     let timeout_duration = Duration::from_secs(timeout_time as u64);
 
+    let default_timeout = 300;
+    let mut cumulative_timeout = default_timeout;
+
     loop {
         // Could be made spawn_blocking if this turns out to take too long
         let upstream_message = ClientMessageUpstream {
@@ -325,8 +337,13 @@ async fn pull_handler(
             .await;
 
         if response.is_err() {
-            error!("Pull request failed: {:?}", response);
+            error!("Pull request failed: {:?}. Waiting {}ms", response, cumulative_timeout);
+            tokio::time::sleep(Duration::from_millis(cumulative_timeout)).await;
+
+            cumulative_timeout *= 2;
             continue;
+        } else {
+            cumulative_timeout = default_timeout;
         }
 
         // Read the response
