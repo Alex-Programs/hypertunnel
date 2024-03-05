@@ -81,7 +81,7 @@ async fn index() -> impl Responder {
     HttpResponse::Ok().body("Hello world!")
 }
 
-#[get("/video/segment/")]
+#[get("/video/segment")]
 async fn downstream_data(
     app_state: web::Data<AppState>,
     req: HttpRequest,
