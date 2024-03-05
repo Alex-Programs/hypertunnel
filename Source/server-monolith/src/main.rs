@@ -288,8 +288,12 @@ async fn upstream_data(
         actor.next_seq_num_up.store(seq_num + 1, Ordering::SeqCst);
     }
 
+    debug!("Sent on messages to actor");
+
     // Get meta information
     let meta = form_meta_response(&actor, 0).await;
+
+    debug!("Formed meta: {:?}", meta);
 
     // Form response
     let response = ServerMessageDownstream {
@@ -298,11 +302,16 @@ async fn upstream_data(
         payload_size: 0,
     };
 
+    debug!("Formed response: {:?}", response);
+
     // Encode response
     let response_bytes = response.encoded().unwrap(); // TODO handle error
+    debug!("Encoded response");
 
     // Encrypt response
     let encrypted = libsecrets::encrypt(&response_bytes, &key).unwrap(); // TODO handle error
+
+    debug!("Encrypted response");
 
     // Return response
     HttpResponse::Ok().body(encrypted)
