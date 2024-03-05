@@ -280,6 +280,11 @@ async fn upstream_data(
             actor.traffic_stats.http_up_to_coordinator_bytes.fetch_add(payload_length, Ordering::Relaxed);
         }
 
+        // Send yellow messages to mspc
+        for yellow_socket in yellow_sockets {
+            &actor.to_coordinator_yellow.send(yellow_socket).unwrap();
+        }
+
         actor.next_seq_num_up.store(seq_num + 1, Ordering::SeqCst);
     }
 
