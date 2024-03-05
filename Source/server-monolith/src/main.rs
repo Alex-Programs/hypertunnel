@@ -81,12 +81,11 @@ async fn index() -> impl Responder {
     HttpResponse::Ok().body("Hello world!")
 }
 
-#[get("/video/segment/{tail:.*}")]
+#[get("/video/segment/")]
 async fn downstream_data(
     app_state: web::Data<AppState>,
     req: HttpRequest,
     body_bytes: Bytes,
-    segment_name: web::Path<String>,
 ) -> impl Responder {
     debug!("Received request to download");
 

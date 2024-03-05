@@ -331,7 +331,7 @@ async fn pull_handler(
             encrypted
         };
 
-        let url = format!("{}/video/segment/{}", target, generate_nonsense_data());
+        let url = format!("{}/video/segment", target);
 
         // Send the data
         let response = client
