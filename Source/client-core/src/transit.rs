@@ -88,6 +88,8 @@ fn generate_nonsense_data() -> String {
 // Change this to "Get a PNG image" incl. header etc, with the
 // encrypted data being some form of additional token in the cookies
 async fn greet_server(transit_socket: Arc<RwLock<TransitSocket>>) -> Result<(), TransitInitError> {
+    info!("Greeting server");
+
     let mut data = format!(
         "Hello. Protocol version: {}, client-transit version: {}, client-name: {}",
         "2",
@@ -123,9 +125,11 @@ async fn greet_server(transit_socket: Arc<RwLock<TransitSocket>>) -> Result<(), 
         .post(&format!("{}/submit", target))
         .body(encrypted)
         .headers(headers)
-        .timeout(Duration::from_secs(timeout_time as u64))
+        .timeout(Duration::from_secs(2 as u64))
         .send()
         .await;
+
+    info!("Received response from server");
 
     match response {
         Ok(response) => {
@@ -165,6 +169,8 @@ async fn greet_server(transit_socket: Arc<RwLock<TransitSocket>>) -> Result<(), 
             }
         }
     }
+
+    info!("Processed response from server");
 
     // If we've gotten here, the connection was successful
     // We should be ready to talk to the server now
@@ -336,20 +342,27 @@ async fn pull_handler(
             .send()
             .await;
 
-        if response.is_err() {
+        let response = if response.is_err() {
             error!("Pull request failed: {:?}. Waiting {}ms", response, cumulative_timeout);
             tokio::time::sleep(Duration::from_millis(cumulative_timeout)).await;
 
             cumulative_timeout *= 2;
             continue;
         } else {
-            cumulative_timeout = default_timeout;
-        }
+            let resp = response.unwrap();
+            if resp.status() == 200 {
+                cumulative_timeout = default_timeout;
+                resp
+            } else {
+                error!("Pull request failed with status {}: {:?}. Waiting {}ms", resp.status(), resp, cumulative_timeout);
+                tokio::time::sleep(Duration::from_millis(cumulative_timeout)).await;
 
-        // Read the response
-        let response = response.unwrap();
-
-        debug!("Pull response status: {}", response.status());
+                if resp.status() != 504 {
+                    cumulative_timeout *= 2;
+                }
+                continue;
+            }
+        };
 
         // Get the data
         let encrypted = response.bytes().await.unwrap();
