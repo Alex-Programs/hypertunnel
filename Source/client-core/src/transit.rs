@@ -13,6 +13,7 @@ use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedReceiver, UnboundedSend
 use tokio::sync::mpsc::error::TryRecvError;
 
 use reqwest::header::{HeaderMap, HeaderValue};
+use std::error::Error;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering;
@@ -342,25 +343,32 @@ async fn pull_handler(
             .send()
             .await;
 
-        let response = if response.is_err() {
-            error!("Pull request failed: {:?}. Waiting {}ms", response, cumulative_timeout);
-            tokio::time::sleep(Duration::from_millis(cumulative_timeout)).await;
+        let response = match response {
+            Ok(response) => {
+                if response.status() != 200 {
+                    warn!("Request completed but with status {}", response.status());
 
-            cumulative_timeout *= 2;
-            continue;
-        } else {
-            let resp = response.unwrap();
-            if resp.status() == 200 {
+                    cumulative_timeout = default_timeout;
+
+                    continue
+                }
                 cumulative_timeout = default_timeout;
-                resp
-            } else {
-                error!("Pull request failed with status {}: {:?}. Waiting {}ms", resp.status(), resp, cumulative_timeout);
+
+                response
+            }
+            Err(error) => {
+                if error.is_timeout() {
+                    // All if fine
+                    info!("Request timeout; continue");
+                    continue
+                }
+                warn!("Error on request. Error: {:?}", error);
+
                 tokio::time::sleep(Duration::from_millis(cumulative_timeout)).await;
 
-                if resp.status() != 504 {
-                    cumulative_timeout *= 2;
-                }
-                continue;
+                cumulative_timeout *= 2;
+
+                continue
             }
         };
 
