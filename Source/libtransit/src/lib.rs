@@ -109,18 +109,8 @@ pub struct ServerMessageDownstream {
 #[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
 pub struct ServerMetaDownstream {
     pub packet_info: UnifiedPacketInfo,
-    pub traffic_stats: ServerMetaDownstreamTrafficStats,
 }
 
-#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
-pub struct ServerMetaDownstreamTrafficStats {
-    pub http_up_to_coordinator_bytes: u32,
-    pub coordinator_up_to_socket_bytes: u32,
-    pub socket_down_to_coordinator_bytes: u32,
-    pub coordinator_down_to_http_message_passer_bytes: u32,
-    pub coordinator_down_to_http_buffer_bytes: u32,
-    pub congestion_ctrl_intake_throttle: u32,
-}
 
 #[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
 pub struct SocksSocketDownstream {

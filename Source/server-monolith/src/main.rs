@@ -42,14 +42,11 @@ struct User {
     key: EncryptionKey,
 }
 
-async fn form_meta_response(session_actor_storage: &SessionActorsStorage, seq_num: u32) -> ServerMetaDownstream {
+async fn form_meta_response(seq_num: u32) -> ServerMetaDownstream {
     let millis_time = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_millis();
-
-    let traffic_stats = (*session_actor_storage.traffic_stats).into_server_meta_downstream_traffic_stats();
-
+    
     ServerMetaDownstream {
         packet_info: UnifiedPacketInfo { unix_ms: millis_time as u64, seq_num },
-        traffic_stats
     }
 }
 
@@ -81,13 +78,16 @@ async fn index() -> impl Responder {
     HttpResponse::Ok().body("Hello world!")
 }
 
+static DOWNSTREAM_SEQ_NUM: AtomicU32 = AtomicU32::new(0);
+
 #[get("/video/segment")]
 async fn downstream_data(
     app_state: web::Data<AppState>,
     req: HttpRequest,
     body_bytes: Bytes,
 ) -> impl Responder {
-    debug!("Received request to download");
+    let seq_num = DOWNSTREAM_SEQ_NUM.fetch_add(1, Ordering::SeqCst);
+    info!("{} Received request to download", seq_num);
 
     // Get token
     let token = req.cookie("token");
@@ -110,21 +110,30 @@ async fn downstream_data(
         }
     };
 
-    // Get actor
-    let actor = app_state.actor_lookup.get(&token);
-    if actor.is_none() {
-        // Return 404 - resist active probing by not telling the client what went wrong
-        warn!("No session found for token with hex representation {} in download!", hex::encode(token));
-        return HttpResponse::NotFound().body("No page exists");
-    }
-    let actor = actor.unwrap();
+    info!("{} getting dashmap; may deadlock", seq_num);
+
+    // Get key
+    let (key, seq_num_down, from_bundler_stream) = {
+        let actor = app_state.actor_lookup.get(&token);
+
+        let actor = match actor {
+            Some(actor) => actor,
+            None => {
+                // Return 404 - resist active probing by not telling the client what went wrong
+                warn!("No session found for token with hex representation {} in download!", hex::encode(token));
+                return HttpResponse::NotFound().body("No page exists");
+            }
+        };
+
+        (actor.key.clone(), actor.seq_num_down, actor.from_bundler_stream)
+    };
+
+    info!("{} data extracted", seq_num);
 
     // Get body
     let body = body_bytes;
 
     // Decrypt body
-    let key = actor.key;
-
     let mut decrypted = match libsecrets::decrypt(&body, &key) {
         Ok(decrypted) => decrypted, // If it succeeds, pull out content from Result<>
         Err(_) => {
@@ -133,6 +142,8 @@ async fn downstream_data(
             return HttpResponse::NotFound().body("No page exists");
         }
     };
+
+    info!("{} decrypted body", seq_num);
 
     // Parse into ClientMessageUpstream
     let upstream: ClientMessageUpstream =
@@ -145,9 +156,11 @@ async fn downstream_data(
             }
         };
 
+    info!("{} parsed into ClientMessageUpstream", seq_num);
+
     // Don't send on - just get
     let mut downstream_socks_sockets = {
-        let return_messages = actor.from_bundler_stream.recv_async().await;
+        let return_messages = from_bundler_stream.recv_async().await;
 
         match return_messages {
             Ok(return_messages) => return_messages,
@@ -159,18 +172,20 @@ async fn downstream_data(
         }
     };
 
+    info!("{} received messages from actor", seq_num);
+
     // Modify traffic stats
     let return_msgs_bytes = downstream_socks_sockets
         .iter()
         .map(|msg| msg.payload.len())
         .sum::<usize>();
 
-    actor.traffic_stats.coordinator_down_to_http_message_passer_bytes.fetch_sub(return_msgs_bytes as u32, Ordering::Relaxed);
-
-    debug!("Returning data: {:?}", downstream_socks_sockets);
+    info!("{} Returning data: {:?}",seq_num, downstream_socks_sockets);
 
     // Get meta information
-    let meta = form_meta_response(&actor, actor.seq_num_down.fetch_add(1, Ordering::SeqCst)).await;
+    let meta = form_meta_response(seq_num_down.fetch_add(1, Ordering::SeqCst)).await;
+
+    info!("{} Formed meta: {:?}", seq_num, meta);
 
     // Form response
     let response = ServerMessageDownstream {
@@ -179,11 +194,17 @@ async fn downstream_data(
         payload_size: 0,
     };
 
+    info!("{} Formed response", seq_num);
+
     // Encode response
     let response_bytes = response.encoded().unwrap(); // TODO handle error
 
+    info!("{} Encoded response", seq_num);
+
     // Encrypt response
     let encrypted = libsecrets::encrypt(&response_bytes, &key).unwrap(); // TODO handle error
+
+    info!("{} Encrypted response", seq_num);
 
     // Return response
     HttpResponse::Ok().body(encrypted)
@@ -291,7 +312,7 @@ async fn upstream_data(
     debug!("Sent on messages to actor");
 
     // Get meta information
-    let meta = form_meta_response(&actor, 0).await;
+    let meta = form_meta_response( 0).await;
 
     debug!("Formed meta: {:?}", meta);
 
