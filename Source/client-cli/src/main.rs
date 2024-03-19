@@ -1,5 +1,4 @@
 use clientcore::{begin_core_client, ClientArguments};
-use simple_logger;
 use log::{info, Level};
 use clap::Parser;
 

@@ -1,6 +1,7 @@
-use rand::Rng; // Not unused - ignore vscode
-use borsh::{BorshSerialize, BorshDeserialize, from_slice, to_vec};
-use std::collections::HashMap;
+#![allow(unused_imports)]
+use rand::Rng; // Not unused - the warning
+
+use borsh::{BorshSerialize, BorshDeserialize, to_vec};
 
 #[cfg(test)]
 mod tests;

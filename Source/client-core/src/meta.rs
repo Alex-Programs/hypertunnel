@@ -1,6 +1,5 @@
-use libtransit::{self, SocketID};
+use libtransit::SocketID;
 use tokio::sync::RwLock;
-use std::sync::atomic::{AtomicU32, Ordering};
 use once_cell::sync::Lazy;
 
 // Simple format: List of socket IDs to terminate reading from ASAP. Order doesn't really matter,

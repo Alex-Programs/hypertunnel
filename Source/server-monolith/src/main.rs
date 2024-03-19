@@ -1,11 +1,10 @@
 use actix_web::web::Bytes;
 use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
-use hex;
-use libsecrets::{self, EncryptionKey};
+use libsecrets::EncryptionKey;
 use rand::Rng;
 use libtransit::SerialMessage;
 
-use log::{debug, error, info, trace, warn};
+use log::{debug, info, warn};
 
 use dashmap::DashMap;
 
@@ -15,20 +14,17 @@ use new_transit::SessionActorsStorage;
 
 use scan_fmt::scan_fmt;
 
-use simple_logger;
-
 use libtransit::{
     ClientMessageUpstream, DeclarationToken, ServerMessageDownstream,
-    ServerMetaDownstream, SocketID, SocksSocketUpstream, SocksSocketDownstream, UnifiedPacketInfo,
+    ServerMetaDownstream, UnifiedPacketInfo,
 };
 
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
 // State passed to all request handlers
 struct AppState {
-    config: config::Config,                                     // Configuration
     users: Vec<User>, // Users from the configuration with the passwords preprocessed into keys
     //                   for faster initial handshake when there are many users,
     actor_lookup: DashMap<DeclarationToken, SessionActorsStorage>, // Lookup table for actors
@@ -37,7 +33,6 @@ struct AppState {
 // Simple user definition
 struct User {
     name: String,
-    password: String,
     key: EncryptionKey,
 }
 
@@ -144,8 +139,8 @@ async fn downstream_data(
 
     info!("{} decrypted body", seq_num);
 
-    // Parse into ClientMessageUpstream
-    let upstream: ClientMessageUpstream =
+    // Parse into ClientMessageUpstream. This is just about checking for validity really
+    let _upstream: ClientMessageUpstream =
         match libtransit::ClientMessageUpstream::decode_from_bytes(&mut decrypted) {
             Ok(upstream) => upstream, // If it succeeds, pull out content from Result<>
             Err(_) => {
@@ -153,7 +148,7 @@ async fn downstream_data(
                 warn!("Failed to parse decrypted download body into ClientMessageUpstream; returning 404");
                 return HttpResponse::NotFound().body("No page exists");
             }
-        };
+    };
 
     info!("{} parsed into ClientMessageUpstream", seq_num);
 
@@ -204,7 +199,7 @@ async fn upstream_data(
     app_state: web::Data<AppState>,
     req: HttpRequest,
     body_bytes: Bytes,
-    segment_name: web::Path<String>,
+    _segment_name: web::Path<String>,
 ) -> impl Responder {
     debug!("Received request to upload");
 
@@ -283,14 +278,12 @@ async fn upstream_data(
         let to_bundler = &actor.to_bundler_stream;
 
         for socket in upstream.socks_sockets {
-            let payload_length = socket.payload.len() as u32;
-
             to_bundler.send(socket).unwrap();
         }
 
         // Send yellow messages to mspc
         for yellow_socket in yellow_sockets {
-            &actor.to_coordinator_yellow.send(yellow_socket).unwrap();
+            let _ = &actor.to_coordinator_yellow.send(yellow_socket).unwrap();
         }
 
         actor.next_seq_num_up.store(seq_num + 1, Ordering::SeqCst);
@@ -491,7 +484,6 @@ async fn main() -> std::io::Result<()> {
 
         users.push(User {
             name: user.name.clone(),
-            password: user.password.clone(),
             key,
         });
 
@@ -499,7 +491,6 @@ async fn main() -> std::io::Result<()> {
     }
 
     let appstate = web::Data::new(AppState {
-        config: configuration.clone(),
         users,
         actor_lookup: DashMap::new()
     });
