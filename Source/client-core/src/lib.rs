@@ -14,7 +14,6 @@ mod transit_builder;
 use transit_builder::TransitSocketBuilder;
 mod transit;
 mod meta;
-use meta::CLIENT_META_UPSTREAM;
 use meta::YELLOW_DATA_UPSTREAM_QUEUE;
 
 use log::{debug, error, info, trace, warn};
@@ -231,9 +230,6 @@ async fn tcp_handler_down(mut write_half: tokio::net::tcp::OwnedWriteHalf,
                     let bytes = &data.payload;
                     let length = bytes.len();
 
-                    // Decrement counter
-                    CLIENT_META_UPSTREAM.response_to_socks_bytes.fetch_sub(length as u32, Ordering::SeqCst);
-
                     if length == 0 {
                         // No point writing. Check that we're not meant to close, though.
                         if data.do_green_terminate {
@@ -350,8 +346,6 @@ async fn tcp_handler_up(mut read_half: tokio::net::tcp::OwnedReadHalf,
             // Trim array to actual size
             upstream_msg.payload.truncate(bytes_read);
 
-            // Send the data to transit
-            CLIENT_META_UPSTREAM.socks_to_coordinator_bytes.fetch_add(bytes_read as u32, Ordering::Relaxed);
             upstream_passer_send.send(upstream_msg).await.expect("Failed to send data to transit");
         }
     }

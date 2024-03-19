@@ -62,7 +62,6 @@ pub struct ClientMessageUpstream {
 #[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
 pub struct ClientMetaUpstream {
     pub packet_info: UnifiedPacketInfo,
-    pub traffic_stats: ClientMetaUpstreamTrafficStats,
     pub set: Option<ClientMetaUpstreamSet>,
     pub yellow_to_stop_reading_from: Vec<SocketID>,
 }
@@ -71,15 +70,6 @@ pub struct ClientMetaUpstream {
 pub struct UnifiedPacketInfo {
     pub unix_ms: u64, // As u32 it would only last 49 days
     pub seq_num: u32,
-}
-
-#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
-pub struct ClientMetaUpstreamTrafficStats {
-    pub socks_to_coordinator_bytes: u32,
-    pub coordinator_to_request_buffer_bytes: u32,
-    pub coordinator_to_request_channel_bytes: u32,
-    pub up_request_in_progress_bytes: u32,
-    pub response_to_socks_bytes: u32,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]

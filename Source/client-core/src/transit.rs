@@ -28,7 +28,7 @@ use std::collections::HashMap;
 static RECEIVED_SEQ_NUM: AtomicU32 = AtomicU32::new(0);
 static SENT_SEQ_NUM: AtomicU32 = AtomicU32::new(0);
 
-use crate::meta::{CLIENT_META_UPSTREAM, ms_since_epoch, YELLOW_DATA_UPSTREAM_QUEUE};
+use crate::meta::YELLOW_DATA_UPSTREAM_QUEUE;
 
 use log::{debug, error, info, trace, warn};
 
@@ -216,12 +216,6 @@ async fn push_handler(
         // Get the size of the multiple messages
         let payload_size = to_send.iter().map(|x| x.payload.len() as u32).sum::<u32>();
 
-        // Decrement the counter
-        CLIENT_META_UPSTREAM.coordinator_to_request_channel_bytes.fetch_sub(payload_size, Ordering::Relaxed);
-
-        // Increment RIP
-        CLIENT_META_UPSTREAM.up_request_in_progress_bytes.fetch_add(payload_size, Ordering::Relaxed);
-
         // Send the data
         // Encode and encrypt in a thread
         let upstream_message = ClientMessageUpstream {
@@ -248,9 +242,6 @@ async fn push_handler(
             .timeout(timeout_duration) // TODO RM
             .send()
             .await;
-
-        // Decrement RIP
-        CLIENT_META_UPSTREAM.up_request_in_progress_bytes.fetch_sub(payload_size, Ordering::Relaxed);
 
         let response = response.unwrap();
 
@@ -281,7 +272,6 @@ async fn get_metadata(seq_num: u32) -> ClientMetaUpstream {
             seq_num,
         },
         set: None,
-        traffic_stats: CLIENT_META_UPSTREAM.as_base(),
         yellow_to_stop_reading_from,
     };
 
@@ -408,8 +398,6 @@ async fn pull_handler(
             match sender {
                 Some(sender) => {
                     let size = socket.payload.len() as u32;
-                    // Increment the counter
-                    CLIENT_META_UPSTREAM.response_to_socks_bytes.fetch_add(size, Ordering::SeqCst);
 
                     // Send the message
                     match sender.send(socket) {
@@ -437,10 +425,6 @@ async fn pull_handler(
                         }
                     };
 
-                    // Increment the counter
-                    let size = socket.payload.len() as u32;
-                    CLIENT_META_UPSTREAM.response_to_socks_bytes.fetch_add(size, Ordering::SeqCst);
-
                     // Send the message
                     match sender.send(socket) {
                         Ok(_) => {}
@@ -461,9 +445,6 @@ async fn pull_handler(
                 debug!("Terminated socket from return lookup: {}", socket_id);
             }
         }
-
-        // Print stats
-        debug!("Meta stats: {:?}", CLIENT_META_UPSTREAM.as_base());
     }
 }
 
@@ -527,9 +508,6 @@ pub async fn handle_transit(
                 let size = upstream.payload.len() as u32;
                 current_buffer_size += size;
 
-                // Take away from socks_to_coordinator
-                CLIENT_META_UPSTREAM.socks_to_coordinator_bytes.fetch_sub(size, Ordering::Relaxed);
-
                 debug!("Gotten data to send up: {:?}", upstream);
                 
                 // Find the relevant socks socket to insert into
@@ -563,9 +541,6 @@ pub async fn handle_transit(
                     // Insert into the socks sockets
                     socks_sockets.push(socks_socket);
                 }
-
-                // Increase the buffer size recorded
-                CLIENT_META_UPSTREAM.coordinator_to_request_buffer_bytes.fetch_add(size, Ordering::Relaxed);
             }
             Err(error) => {
                 match error {
@@ -618,11 +593,6 @@ pub async fn handle_transit(
 
             // Send the buffer to the push handler
             push_passer_send.send_async(socks_sockets.clone()).await.unwrap();
-            // Set recorded buffer size to 0
-            CLIENT_META_UPSTREAM.coordinator_to_request_buffer_bytes.store(0, Ordering::Relaxed);
-
-            // Increment egress buffer
-            CLIENT_META_UPSTREAM.coordinator_to_request_channel_bytes.fetch_add(current_buffer_size, Ordering::Relaxed);
 
             // Eliminate socks sockets with terminate flag set
             socks_sockets.retain(|x| !x.red_terminate); // This is *elegant*
