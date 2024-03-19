@@ -1,6 +1,7 @@
 use libsocks;
 use libtransit::{UpStreamMessage, SocketID, SocksSocketDownstream};
 use tokio::net::{TcpListener, TcpStream};
+#[allow(unused)] // Not unused - the warning is wrong
 use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedReceiver, UnboundedSender};
 use tokio::sync::mpsc::error::TryRecvError;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -16,7 +17,8 @@ mod transit;
 mod meta;
 use meta::YELLOW_DATA_UPSTREAM_QUEUE;
 
-use log::{debug, error, info, trace, warn};
+#[allow(unused)]
+use log::{debug, error, info, warn};
 
 pub struct ClientArguments {
     pub listen_address: String,

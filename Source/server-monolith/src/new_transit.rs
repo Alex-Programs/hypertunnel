@@ -1,23 +1,23 @@
-use flume;
 use libtransit::{
-    ClientMetaUpstream, DeclarationToken, DownStreamMessage, ServerMetaDownstream, SocketID,
-    SocksSocketDownstream, SocksSocketUpstream, UpStreamMessage,
+    DeclarationToken, DownStreamMessage, SocketID,
+    SocksSocketDownstream, SocksSocketUpstream,
 };
-use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt, Interest, Ready};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, Interest};
 use tokio::net::TcpStream;
 
 use libsecrets::EncryptionKey;
 
-use log::{debug, error, info, trace, warn};
+use log::{debug, error, info};
 
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+
+use std::collections::HashMap;
 
 type SequenceNumber = u32;
 
@@ -275,7 +275,6 @@ pub async fn handle_session(
                 let do_red_terminate = message.red_terminate;
 
                 // Send the payload to the TCP handler
-                let msg_size = message.payload.len() as u32;
                 match tcp_handler.send(message) {
                     Ok(_) => {
                         // Just let it pass through
@@ -364,8 +363,6 @@ async fn handle_tcp_up(
                     return;
                 }
             };
-
-            let payload_size = message.payload.len() as u32;
 
             // Write payload
             tcp_write_half.write_all(&message.payload).await.unwrap();
@@ -473,9 +470,6 @@ async fn handle_tcp_down(
 
             // Trim array down to size
             downstream_msg.payload.truncate(bytes_read);
-
-            // Send the message
-            let payload_size = downstream_msg.payload.len() as u32;
 
             // Send back
             to_http_stream.send(downstream_msg).unwrap();

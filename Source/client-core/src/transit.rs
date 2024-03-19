@@ -4,33 +4,31 @@ use flume::{self, Receiver as FlumeReceiver, Sender as FlumeSender};
 use libsecrets::{self, EncryptionKey};
 use libtransit::{self, UnifiedPacketInfo, SocksSocketUpstream, SocksSocketDownstream};
 use libtransit::{
-    ClientMessageUpstream, ClientMetaUpstream, DeclarationToken, DownStreamMessage,
-    ServerMessageDownstream, ServerMetaDownstream, SocketID, UpStreamMessage,
+    ClientMessageUpstream, ClientMetaUpstream, DeclarationToken,
+    ServerMessageDownstream, SocketID, UpStreamMessage,
 };
 use rand::Rng;
 use reqwest::Client;
 use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedReceiver, UnboundedSender};
 use tokio::sync::mpsc::error::TryRecvError;
+use std::collections::HashMap;
 
-use reqwest::header::{HeaderMap, HeaderValue};
-use std::error::Error;
+use reqwest::header::HeaderMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering;
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::sync::broadcast::{self, Receiver as BroadcastReceiver, Sender as BroadcastSender};
+use tokio::sync::broadcast::{Receiver as BroadcastReceiver, Sender as BroadcastSender};
 use tokio::sync::RwLock;
 use tokio::task;
-
-use std::collections::HashMap;
 
 static RECEIVED_SEQ_NUM: AtomicU32 = AtomicU32::new(0);
 static SENT_SEQ_NUM: AtomicU32 = AtomicU32::new(0);
 
 use crate::meta::YELLOW_DATA_UPSTREAM_QUEUE;
 
-use log::{debug, error, info, trace, warn};
+use log::{debug, error, info, warn};
 
 pub struct TransitSocket {
     pub target: String,                      // Base URL, incl. protocol
@@ -112,7 +110,7 @@ async fn greet_server(transit_socket: Arc<RwLock<TransitSocket>>) -> Result<(), 
 
     let encrypted = libsecrets::encrypt(data.as_bytes(), &transit_socket.read().await.key)?;
 
-    let (target, headers, key, timeout_time) = {
+    let (target, headers, key, _) = {
         let transit_socket = transit_socket.read().await;
         (
             transit_socket.target.clone(),
@@ -213,8 +211,7 @@ async fn push_handler(
             }
         };
 
-        // Get the size of the multiple messages
-        let payload_size = to_send.iter().map(|x| x.payload.len() as u32).sum::<u32>();
+        let payload_size = to_send.iter().fold(0, |acc, x| acc + x.payload.len() as u32);
 
         // Send the data
         // Encode and encrypt in a thread
@@ -283,7 +280,7 @@ async fn get_metadata(seq_num: u32) -> ClientMetaUpstream {
 async fn pull_handler(
     transit_socket: Arc<RwLock<TransitSocket>>,
     mut message_passer_passer: BroadcastReceiver<DownstreamBackpasser>,
-    mut blue_termination_send: FlumeSender<SocketID>,
+    blue_termination_send: FlumeSender<SocketID>,
 ) {
     // This will hold the return lookup and be populated by the messagePasserPassers
     let mut return_lookup: HashMap<SocketID, UnboundedSender<SocksSocketDownstream>> = HashMap::new();
@@ -397,8 +394,6 @@ async fn pull_handler(
 
             match sender {
                 Some(sender) => {
-                    let size = socket.payload.len() as u32;
-
                     // Send the message
                     match sender.send(socket) {
                         Ok(_) => {}
@@ -484,8 +479,8 @@ pub async fn handle_transit(
     }
 
     // TODO make this variable
-    let FORCE_SEND_BUFF_SIZE = 1024 * 8192;
-    let MODETIME = 10; // In milliseconds
+    let force_send_buff_size = 1024 * 32768;
+    let mode_time = 10; // In milliseconds
 
     let mut last_upstream_time = Instant::now();
     let mut current_buffer_size = 0;
@@ -564,12 +559,12 @@ pub async fn handle_transit(
         }
 
         let mut do_send = false;
-        if current_buffer_size > FORCE_SEND_BUFF_SIZE {
-            debug!("Sending on due to buffer size {} being greater than {}", current_buffer_size, FORCE_SEND_BUFF_SIZE);
+        if current_buffer_size > force_send_buff_size {
+            debug!("Sending on due to buffer size {} being greater than {}", current_buffer_size, force_send_buff_size);
             do_send = true;
         }
 
-        if last_upstream_time.elapsed().as_millis() > MODETIME
+        if last_upstream_time.elapsed().as_millis() > mode_time
             && current_buffer_size > 0
         {
             debug!("Sending on due to modetime");

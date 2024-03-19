@@ -4,8 +4,6 @@ use crate::transit::TransitSocket;
 use libtransit::ServerMetaDownstream;
 use rand;
 use reqwest::header::{HeaderMap, HeaderValue};
-use hex;
-use std::collections::HashMap;
 
 pub struct TransitSocketBuilder {
     target: Option<String>,
@@ -37,6 +35,7 @@ impl TransitSocketBuilder {
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_key(mut self, key: EncryptionKey) -> Self {
         if self.password.is_some() {
             panic!("Cannot set both key and password");
@@ -53,6 +52,7 @@ impl TransitSocketBuilder {
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_client_identifier(mut self, client_identifier: [u8; 16]) -> Self {
         self.client_identifier = Some(client_identifier);
         self

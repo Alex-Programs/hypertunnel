@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use num_cpus;
-use log::{debug, error, info, trace, warn};
+use log::{debug, warn};
+
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Config {
@@ -46,5 +46,8 @@ pub fn load_config() -> Config {
     };
 
     let config: Config = toml::from_str(&contents).unwrap();
+
+    debug!("Loaded configuration: {:?}", config);
+
     config
 }
