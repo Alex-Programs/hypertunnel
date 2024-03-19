@@ -12,7 +12,6 @@ use dashmap::DashMap;
 mod config;
 mod new_transit;
 use new_transit::SessionActorsStorage;
-mod meta;
 
 use scan_fmt::scan_fmt;
 
@@ -25,7 +24,7 @@ use libtransit::{
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 // State passed to all request handlers
 struct AppState {
@@ -113,7 +112,7 @@ async fn downstream_data(
     info!("{} getting dashmap; may deadlock", seq_num);
 
     // Get key
-    let (key, seq_num_down, from_bundler_stream) = {
+    let (key, from_bundler_stream) = {
         let actor = app_state.actor_lookup.get(&token);
 
         let actor = match actor {
@@ -125,7 +124,7 @@ async fn downstream_data(
             }
         };
 
-        (actor.key.clone(), actor.seq_num_down, actor.from_bundler_stream)
+        (actor.key.clone(), actor.from_bundler_stream.clone())
     };
 
     info!("{} data extracted", seq_num);
@@ -159,11 +158,11 @@ async fn downstream_data(
     info!("{} parsed into ClientMessageUpstream", seq_num);
 
     // Don't send on - just get
-    let mut downstream_socks_sockets = {
-        let return_messages = from_bundler_stream.recv_async().await;
+    let (return_messages, seq_num) = {
+        let responded_data = from_bundler_stream.recv_async().await;
 
-        match return_messages {
-            Ok(return_messages) => return_messages,
+        match responded_data {
+            Ok(responded_data) => responded_data,
             Err(_) => {
                 // Return 404 - resist active probing by not telling the client what went wrong
                 warn!("Failed to receive messages from actor in download; returning 404");
@@ -172,25 +171,15 @@ async fn downstream_data(
         }
     };
 
-    info!("{} received messages from actor", seq_num);
-
-    // Modify traffic stats
-    let return_msgs_bytes = downstream_socks_sockets
-        .iter()
-        .map(|msg| msg.payload.len())
-        .sum::<usize>();
-
-    info!("{} Returning data: {:?}",seq_num, downstream_socks_sockets);
-
     // Get meta information
-    let meta = form_meta_response(seq_num_down.fetch_add(1, Ordering::SeqCst)).await;
+    let meta = form_meta_response(seq_num).await;
 
     info!("{} Formed meta: {:?}", seq_num, meta);
 
     // Form response
     let response = ServerMessageDownstream {
         metadata: meta,
-        socks_sockets: downstream_socks_sockets,
+        socks_sockets: return_messages,
         payload_size: 0,
     };
 
@@ -297,8 +286,6 @@ async fn upstream_data(
             let payload_length = socket.payload.len() as u32;
 
             to_bundler.send(socket).unwrap();
-
-            actor.traffic_stats.http_up_to_coordinator_bytes.fetch_add(payload_length, Ordering::Relaxed);
         }
 
         // Send yellow messages to mspc

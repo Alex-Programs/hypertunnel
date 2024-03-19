@@ -14,20 +14,19 @@ use libsecrets::EncryptionKey;
 
 use log::{debug, error, info, trace, warn};
 
-use crate::meta;
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
+type SequenceNumber = u32;
+
 pub struct SessionActorsStorage {
     pub to_bundler_stream: mpsc::UnboundedSender<SocksSocketUpstream>,
-    pub from_bundler_stream: flume::Receiver<Vec<SocksSocketDownstream>>,
+    pub from_bundler_stream: flume::Receiver<(Vec<SocksSocketDownstream>, SequenceNumber)>,
     pub key: EncryptionKey,
-    pub seq_num_down: AtomicU32,
     pub next_seq_num_up: AtomicU32,
     pub declaration_token: DeclarationToken,
-    pub traffic_stats: Arc<meta::ServerMetaDownstreamTrafficStatsSynced>,
     pub to_coordinator_yellow: mpsc::UnboundedSender<SocketID>,
 }
 
@@ -42,17 +41,8 @@ pub async fn create_actor(key: &EncryptionKey, token: DeclarationToken) -> Sessi
         to_bundler_stream,
         from_bundler_stream,
         key: key.clone(),
-        seq_num_down: AtomicU32::new(0),
         next_seq_num_up: AtomicU32::new(0),
         declaration_token: token,
-        traffic_stats: Arc::new(meta::ServerMetaDownstreamTrafficStatsSynced {
-            http_up_to_coordinator_bytes: AtomicU32::new(0),
-            coordinator_up_to_socket_bytes: AtomicU32::new(0),
-            socket_down_to_coordinator_bytes: AtomicU32::new(0),
-            coordinator_down_to_http_message_passer_bytes: AtomicU32::new(0),
-            coordinator_down_to_http_buffer_bytes: AtomicU32::new(0),
-            congestion_ctrl_intake_throttle: AtomicU32::new(0),
-        }),
         to_coordinator_yellow,
     };
 
@@ -60,8 +50,8 @@ pub async fn create_actor(key: &EncryptionKey, token: DeclarationToken) -> Sessi
     tokio::spawn(handle_session(
         from_http_stream,
         to_http_stream,
-        storage.traffic_stats.clone(),
         from_coordinator_yellow,
+        AtomicU32::new(0),
     ));
 
     // Return the storage
@@ -70,9 +60,9 @@ pub async fn create_actor(key: &EncryptionKey, token: DeclarationToken) -> Sessi
 
 pub async fn handle_session(
     mut from_http_stream: mpsc::UnboundedReceiver<SocksSocketUpstream>,
-    to_http_stream: flume::Sender<Vec<SocksSocketDownstream>>,
-    traffic_stats: Arc<meta::ServerMetaDownstreamTrafficStatsSynced>,
+    to_http_stream: flume::Sender<(Vec<SocksSocketDownstream>, SequenceNumber)>,
     mut from_coordinator_yellow: mpsc::UnboundedReceiver<SocketID>,
+    seq_num_down: AtomicU32,
 ) {
     let mut stream_to_tcp_handlers: HashMap<SocketID, mpsc::UnboundedSender<SocksSocketUpstream>> =
         HashMap::new();
@@ -144,15 +134,6 @@ pub async fn handle_session(
                             let payload_length = message.payload.len();
                             buffer_size += payload_length;
 
-                            let payload_length_u32 = payload_length as u32;
-
-                            traffic_stats
-                                .coordinator_down_to_http_buffer_bytes
-                                .fetch_add(payload_length_u32, Ordering::Relaxed);
-                            traffic_stats
-                                .socket_down_to_coordinator_bytes
-                                .fetch_sub(payload_length_u32, Ordering::Relaxed);
-
                             if message.do_green_terminate {
                                 downstream_socket.do_green_terminate = true; // It'll be removed later when we send the buffer back
                             } else {
@@ -221,14 +202,7 @@ pub async fn handle_session(
         };
 
         if should_return {
-            to_http_stream.send(downstream_sockets.clone()).unwrap();
-
-            traffic_stats
-                .coordinator_down_to_http_message_passer_bytes
-                .fetch_add(buffer_size as u32, Ordering::Relaxed);
-            traffic_stats
-                .coordinator_down_to_http_buffer_bytes
-                .fetch_sub(buffer_size as u32, Ordering::Relaxed);
+            to_http_stream.send((downstream_sockets.clone(), seq_num_down.fetch_add(1, Ordering::SeqCst))).unwrap();
 
             downstream_sockets.retain(|socket| !socket.do_green_terminate);
 
@@ -287,7 +261,6 @@ pub async fn handle_session(
                         message.dest_ip,
                         message.dest_port,
                         message.socket_id,
-                        traffic_stats.clone(),
                         yellow_informer,
                         blue_termination_sender.clone()
                     ));
@@ -305,9 +278,7 @@ pub async fn handle_session(
                 let msg_size = message.payload.len() as u32;
                 match tcp_handler.send(message) {
                     Ok(_) => {
-                        traffic_stats
-                         .coordinator_up_to_socket_bytes
-                         .fetch_add(msg_size, Ordering::Relaxed);
+                        // Just let it pass through
                     }
                     Err(e) => {
                         info!("Error sending to TCP handler: {:?}", e);
@@ -317,10 +288,6 @@ pub async fn handle_session(
                         // Just continue
                     }
                 }
-
-                traffic_stats
-                    .http_up_to_coordinator_bytes
-                    .fetch_sub(msg_size, Ordering::Relaxed);
 
                 // Check if the message says to terminate
                 if do_red_terminate {
@@ -359,7 +326,6 @@ fn send_down_blue_channel(blue_message_sender: mpsc::UnboundedSender<SocketID>, 
 async fn handle_tcp_up(
     mut from_http_stream: mpsc::UnboundedReceiver<SocksSocketUpstream>,
     mut tcp_write_half: tokio::net::tcp::OwnedWriteHalf,
-    traffic_stats: Arc<meta::ServerMetaDownstreamTrafficStatsSynced>,
     socket_id: SocketID,
     blue_message_sender: mpsc::UnboundedSender<SocketID>,
 ) {
@@ -400,9 +366,6 @@ async fn handle_tcp_up(
             };
 
             let payload_size = message.payload.len() as u32;
-            traffic_stats
-                .coordinator_up_to_socket_bytes
-                .fetch_sub(payload_size, Ordering::Relaxed);
 
             // Write payload
             tcp_write_half.write_all(&message.payload).await.unwrap();
@@ -441,7 +404,6 @@ async fn handle_tcp_down(
     to_http_stream: mpsc::UnboundedSender<DownStreamMessage>,
     mut tcp_read_half: tokio::net::tcp::OwnedReadHalf,
     socket_id: SocketID,
-    traffic_stats: Arc<meta::ServerMetaDownstreamTrafficStatsSynced>,
     yellow_informer: Arc<AtomicBool>,
 ) {
     loop {
@@ -517,10 +479,6 @@ async fn handle_tcp_down(
 
             // Send back
             to_http_stream.send(downstream_msg).unwrap();
-
-            traffic_stats
-                .socket_down_to_coordinator_bytes
-                .fetch_add(payload_size, Ordering::Relaxed);
         }
     }
 }
@@ -531,7 +489,6 @@ pub async fn handle_tcp(
     ip: u32,
     port: u16,
     socket_id: SocketID,
-    traffic_stats: Arc<meta::ServerMetaDownstreamTrafficStatsSynced>,
     yellow_informer: Arc<AtomicBool>,
     handle_blue_sender: mpsc::UnboundedSender<SocketID>,
 ) {
@@ -554,7 +511,6 @@ pub async fn handle_tcp(
     tokio::spawn(handle_tcp_up(
         from_http_stream,
         tcp_write_half,
-        traffic_stats.clone(),
         socket_id,
         handle_blue_sender
     ));
@@ -563,7 +519,6 @@ pub async fn handle_tcp(
         to_http_stream,
         tcp_read_half,
         socket_id,
-        traffic_stats.clone(),
         yellow_informer,
     ));
 }

@@ -16,13 +16,6 @@ fn test_client_upstream() {
                 unix_ms: 0,
                 seq_num: 0,
             },
-            traffic_stats: ClientMetaUpstreamTrafficStats {
-                socks_to_coordinator_bytes: 0,
-                coordinator_to_request_buffer_bytes: 0,
-                coordinator_to_request_channel_bytes: 0,
-                up_request_in_progress_bytes: 0,
-                response_to_socks_bytes: 0,
-            },
             set: None,
             yellow_to_stop_reading_from: vec![0],
         },
@@ -74,14 +67,6 @@ fn test_server_message_downstream() {
                 unix_ms: 0,
                 seq_num: 0,
             },
-            traffic_stats: ServerMetaDownstreamTrafficStats {
-                http_up_to_coordinator_bytes: 0,
-                coordinator_up_to_socket_bytes: 0,
-                socket_down_to_coordinator_bytes: 0,
-                coordinator_down_to_http_message_passer_bytes: 0,
-                coordinator_down_to_http_buffer_bytes: 0,
-                congestion_ctrl_intake_throttle: 0,
-            },
         },
         socks_sockets: vec![SocksSocketDownstream {
             socket_id: 0,
@@ -89,6 +74,7 @@ fn test_server_message_downstream() {
             dest_port: 0,
             payload: vec![0, 1, 2, 3],
             do_green_terminate: false,
+            do_blue_terminate: false,
         }],
         payload_size: 4,
     };
