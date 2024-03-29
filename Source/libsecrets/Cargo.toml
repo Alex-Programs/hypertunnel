@@ -30,5 +30,5 @@ name = "allocate_benchmark"
 harness = false
 
 [[bench]]
-name = "robs_benchmark"
+name = "structs_vs_strings"
 harness = false
