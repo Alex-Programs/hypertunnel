@@ -23,7 +23,7 @@ hex = "0.4"
 
 num_cpus = "1.16"
 
-tokio = {version = "1", features = ["sync", "net", "io-util"]}
+tokio = {version = "1", features = ["sync", "net", "io-util", "rt", "time"]}
 
 flume = "0.11"
 

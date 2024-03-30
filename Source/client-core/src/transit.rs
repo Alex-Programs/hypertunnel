@@ -96,17 +96,13 @@ async fn greet_server(transit_socket: Arc<RwLock<TransitSocket>>) -> Result<(), 
         transit_socket.read().await.client_name
     );
 
-    // Find minimum padding amount such that it's at least 512 bytes
     let length = data.len();
-    let min_padding = 512 - length;
-
-    // Find maximum padding amount such that it's at most 1024 bytes
-    let max_padding = 1024 - length;
-
-    // Add random padding up to 1024 bytes
-    let mut rng = rand::thread_rng();
-    let amount = rng.gen_range(min_padding..max_padding);
-    data = data + &" ".repeat(amount);
+    if length < 1024 {
+        let min_padding = 512_usize.saturating_sub(length);
+        let max_padding = 1024 - length;
+        let amount = rand::thread_rng().gen_range(min_padding..=max_padding);
+        data.push_str(&" ".repeat(amount));
+    }
 
     let encrypted = libsecrets::encrypt(data.as_bytes(), &transit_socket.read().await.key)?;
 
@@ -217,7 +213,7 @@ async fn push_handler(
         // Encode and encrypt in a thread
         let upstream_message = ClientMessageUpstream {
             socks_sockets: to_send,
-            metadata: get_metadata(SENT_SEQ_NUM.fetch_add(1, Ordering::SeqCst)).await,
+            metadata: get_upload_metadata(SENT_SEQ_NUM.fetch_add(1, Ordering::SeqCst)).await,
             payload_size,
         };
 
@@ -248,7 +244,7 @@ async fn push_handler(
     }
 }
 
-async fn get_metadata(seq_num: u32) -> ClientMetaUpstream {
+async fn get_upload_metadata(seq_num: u32) -> ClientMetaUpstream {
     let yellow_to_stop_reading_from = {
         let mut data = YELLOW_DATA_UPSTREAM_QUEUE.write().await;
 
@@ -275,6 +271,20 @@ async fn get_metadata(seq_num: u32) -> ClientMetaUpstream {
     debug!("Sending metadata: {:?}", data);
 
     data
+}
+
+fn get_poll_metadata() -> ClientMetaUpstream {
+    ClientMetaUpstream {
+        packet_info: UnifiedPacketInfo {
+            unix_ms: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64,
+            seq_num: 0,
+        },
+        set: None,
+        yellow_to_stop_reading_from: Vec::new(),
+    }
 }
 
 async fn pull_handler(
@@ -307,7 +317,7 @@ async fn pull_handler(
         // Could be made spawn_blocking if this turns out to take too long
         let upstream_message = ClientMessageUpstream {
             socks_sockets: Vec::with_capacity(0),
-            metadata: get_metadata(0).await,
+            metadata: get_poll_metadata(),
             payload_size: 0,
         };
 
@@ -484,6 +494,7 @@ pub async fn handle_transit(
 
     let mut last_upstream_time = Instant::now();
     let mut current_buffer_size = 0;
+    let mut has_pending_message = false;
     let mut last_loop_time = Instant::now();
 
     let mut socks_sockets: Vec<libtransit::SocksSocketUpstream> = Vec::with_capacity(8);
@@ -499,6 +510,8 @@ pub async fn handle_transit(
         let stream_data = upstream_passer_rcv.try_recv();
         match stream_data {
             Ok(mut upstream) => {
+                has_pending_message = true;
+
                 // Increment buffer size
                 let size = upstream.payload.len() as u32;
                 current_buffer_size += size;
@@ -530,7 +543,7 @@ pub async fn handle_transit(
                         dest_ip: upstream.dest_ip,
                         dest_port: upstream.dest_port,
                         payload: upstream.payload,
-                        red_terminate: false,
+                        red_terminate: upstream.red_terminate,
                     };
 
                     // Insert into the socks sockets
@@ -564,9 +577,7 @@ pub async fn handle_transit(
             do_send = true;
         }
 
-        if last_upstream_time.elapsed().as_millis() > mode_time
-            && current_buffer_size > 0
-        {
+        if last_upstream_time.elapsed().as_millis() > mode_time && has_pending_message {
             debug!("Sending on due to modetime");
             do_send = true;
         }
@@ -599,6 +610,7 @@ pub async fn handle_transit(
 
             // Reset buffer size
             current_buffer_size = 0;
+            has_pending_message = false;
 
             // Reset last upstream time
             last_upstream_time = Instant::now();

@@ -48,7 +48,7 @@ fn parse_token(token_hex: String) -> Option<DeclarationToken> {
     debug!("Hex token: {}", token_hex);
 
     // Convert to bytes
-    let token_bytes = hex::decode(token_hex).unwrap();
+    let token_bytes = hex::decode(token_hex).ok()?;
 
     // Check it's the correct length
     if token_bytes.len() != 16 {

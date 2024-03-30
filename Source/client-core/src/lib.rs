@@ -144,8 +144,9 @@ async fn tcp_listener(mut stream: TcpStream, upstream_passer_send: Sender<UpStre
                     // Sanity check
                     if connect_req.version != 4 {
                         warn!("Incorrect socks version ({}) from program {}", connect_req.version, connect_req.userid);
-                        stream.writable().await.unwrap();
-                        stream.try_write(&rejection_bytes).unwrap();
+                        if let Err(error) = stream.write_all(&rejection_bytes).await {
+                            error!("Failed to send SOCKS rejection: {:?}", error);
+                        }
                         return;
                     }
 
@@ -156,34 +157,18 @@ async fn tcp_listener(mut stream: TcpStream, upstream_passer_send: Sender<UpStre
                     // We don't support bind yet
                     let user_id = bind_req.userid;
                     error!("Received bind request (unsupported) from user ID {}. Killing connection", user_id);
-                    stream.writable().await.unwrap();
-                    stream.try_write(&rejection_bytes).unwrap();
+                    if let Err(error) = stream.write_all(&rejection_bytes).await {
+                        error!("Failed to send SOCKS rejection: {:?}", error);
+                    }
                     return;
                 }
             }
         },
         Err(error) => {
             error!("Failed to parse SOCKS request: {:?}", error);
-            match stream.writable().await {
-                Ok(_) => {
-                    let res = stream.try_write(&rejection_bytes);
-                    if res.is_err() {
-                        error!("Failed to send rejection to client: {:?}", res.err().unwrap());
-                    }
-                },
-                Err(error) => {
-                    error!("Failed to send rejection to client: {:?}", error);
-                }
-            };
-            match stream.try_write(&rejection_bytes) {
-                Ok(_) => {
-                    info!("Sent rejection to client");
-                },
-                Err(error) => {
-                    error!("Failed to send rejection to client: {:?}", error);
-                }
+            if let Err(error) = stream.write_all(&rejection_bytes).await {
+                error!("Failed to send SOCKS rejection: {:?}", error);
             }
-
             return;
         }
     }
@@ -198,16 +183,9 @@ async fn tcp_listener(mut stream: TcpStream, upstream_passer_send: Sender<UpStre
         dstip,
     };
 
-    stream.writable().await.unwrap();
-
-    match stream.try_write(&reply.to_binary()) {
-        Ok(_) => {
-            info!("Said hello to client on recv");
-        },
-        Err(error) => {
-            error!("Failed to send reply to client: {:?}", error);
-            return;
-        }
+    if let Err(error) = stream.write_all(&reply.to_binary()).await {
+        error!("Failed to send SOCKS acceptance: {:?}", error);
+        return;
     }
 
     // It seems initialisation was a success. Let's get our socket ID
@@ -235,64 +213,26 @@ async fn tcp_handler_down(mut write_half: tokio::net::tcp::OwnedWriteHalf,
     mut downstream_passer_receive: UnboundedReceiver<SocksSocketDownstream>,
     socket_id: SocketID,
 ) {
-    loop {
-        let ready = write_half.ready(Interest::WRITABLE).await.expect("Failed to wait for socket to be ready");
-
-        if ready.is_writable() {
-            match downstream_passer_receive.recv().await {
-                Some(data) => {
-                    // Transit has sent us data
-                    // Send it to the client
-                    let bytes = &data.payload;
-                    let length = bytes.len();
-
-                    if length == 0 {
-                        // No point writing. Check that we're not meant to close, though.
-                        if data.do_green_terminate {
-                            // We've been told to close
-                            debug!("Closing writer for id {} due to green terminate at point of zero length", socket_id);
-                            return
-                        }
-                        continue
-                    }
-
-                    match write_half.try_write(bytes) {
-                        Ok(_) => {
-                            // All is fine
-                            debug!("Sent {} bytes to client", length);
-                        },
-                        Err(error) => {
-                            // We can't write anymore. This should be propagated
-                            // up the yellow route, unless we've already been told to close.
-                            if data.do_green_terminate {
-                                // We've already been told to close
-                                debug!("Closing writer for id {} due to simultaneous error and green terminate", socket_id);
-                                return
-                            } else {
-                                yellow_route_record_error(socket_id, error.to_string()).await;
-                                return;
-                            }
-                        }
-                    }
-
-                    // Check if we've been told to close
-                    if data.do_green_terminate {
-                        // We've been told to close
-                        debug!("Closing writer for id {} due to green terminate", socket_id);
-                        return
-                    }
-                },
-                None => {
-                    // Message passer has disconnected due to green route closing
-                    // Simply close this half of the socket
-                    debug!("Closing writer for id {} due to no data on passer due to (likely) green terminate on passer", socket_id);
-                    write_half.shutdown().await.expect("Failed to shutdown socket at green route passer close");
-
-                    // Now leave
-                    return
+    while let Some(data) = downstream_passer_receive.recv().await {
+        if !data.payload.is_empty() {
+            if let Err(error) = write_half.write_all(&data.payload).await {
+                if !data.do_green_terminate {
+                    yellow_route_record_error(socket_id, error.to_string()).await;
                 }
+                return;
             }
+            debug!("Sent {} bytes to client", data.payload.len());
         }
+
+        if data.do_green_terminate {
+            debug!("Closing writer for id {} due to green terminate", socket_id);
+            return;
+        }
+    }
+
+    debug!("Closing writer for id {} because its downstream channel closed", socket_id);
+    if let Err(error) = write_half.shutdown().await {
+        debug!("Failed to shut down writer for id {}: {:?}", socket_id, error);
     }
 }
 

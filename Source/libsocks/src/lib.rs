@@ -78,11 +78,16 @@ pub struct Socks4BindReply {
 
 #[derive(Debug)]
 pub enum DecodeCommandError {
+    TruncatedRequest,
     InvalidCommand,
     BinrwError(binrw::Error),
 }
 
 pub fn decode_socks_request(data: &[u8]) -> Result<Socks4Request, DecodeCommandError> {
+    if data.len() < 2 {
+        return Err(DecodeCommandError::TruncatedRequest);
+    }
+
     // Get type based on second byte
     let command_type = match data[1] {
         0x01 => Socks4Command::Connect,
@@ -124,6 +129,18 @@ mod tests {
             dstip: 1,
             userid: binrw::NullString::from("abcd"),
         }));
+    }
+
+    #[test]
+    fn reject_truncated_request() {
+        assert!(matches!(
+            decode_socks_request(&[]),
+            Err(DecodeCommandError::TruncatedRequest)
+        ));
+        assert!(matches!(
+            decode_socks_request(&[0x04]),
+            Err(DecodeCommandError::TruncatedRequest)
+        ));
     }
 
     #[test]

@@ -77,6 +77,7 @@ pub async fn handle_session(
 
     let mut last_return_time: Instant = Instant::now();
     let mut buffer_size = 0;
+    let mut has_pending_response = false;
     let mut downstream_sockets: Vec<SocksSocketDownstream> = Vec::new();
 
     let mut last_iteration_time: Instant = Instant::now();
@@ -130,6 +131,8 @@ pub async fn handle_session(
                     // Try to receive from the TCP handler
                     match tcp_handler.try_recv() {
                         Ok(message) => {
+                            has_pending_response = true;
+
                             // Add to the buffer
                             let payload_length = message.payload.len();
                             buffer_size += payload_length;
@@ -148,6 +151,7 @@ pub async fn handle_session(
                             } else if e == tokio::sync::mpsc::error::TryRecvError::Disconnected {
                                 // Terminate the socket
                                 downstream_socket.do_green_terminate = true;
+                                has_pending_response = true;
                             }
                         }
                     }
@@ -165,6 +169,7 @@ pub async fn handle_session(
                         .unwrap();
 
                     downstream_socket.do_blue_terminate = true;
+                    has_pending_response = true;
 
                     // Remove from tcp_to_http handler
                     stream_from_tcp_handlers.remove(&socket_id);
@@ -186,7 +191,7 @@ pub async fn handle_session(
             debug!("Returning; Buffer size is {}", buffer_size);
             true
         } else if last_return_time.elapsed() > Duration::from_millis(10) {
-            if buffer_size > 0 {
+            if has_pending_response {
                 debug!("Returning; Time since last return is {:?}", last_return_time.elapsed());
 
                 last_return_time = Instant::now();
@@ -209,9 +214,11 @@ pub async fn handle_session(
             // Reset the buffer
             for socket in &mut downstream_sockets { // NOTE: TODO: This will memory leak in a long enough period unless we have a timeout for unused sockets
                 socket.payload.clear();
+                socket.do_blue_terminate = false;
             }
 
             buffer_size = 0;
+            has_pending_response = false;
 
             // Update the last return time
             last_return_time = Instant::now();

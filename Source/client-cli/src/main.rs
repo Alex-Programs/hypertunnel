@@ -15,7 +15,7 @@ struct Args {
     #[clap(long, default_value = "http://127.0.1:8000")]
     target_host: String,
 
-    #[clap(long, default_value = "12345")]
+    #[clap(long)]
     password: String,
 
     #[clap(long, default_value = "8")]
@@ -47,7 +47,15 @@ async fn main() {
     simple_logger::set_up_color_terminal();
     simple_logger::init_with_level(level).unwrap();
 
-    info!("Received arguments: {:?}", arguments);
+    info!(
+        "Listening on {}:{} and connecting to {} with {} upload worker(s), {} download worker(s), and a {} second request timeout",
+        arguments.listen_host,
+        arguments.listen_port,
+        arguments.target_host,
+        arguments.push_client_count,
+        arguments.pull_client_count,
+        arguments.timeout_time_s,
+    );
 
     let client_args = ClientArguments {
         listen_address: arguments.listen_host,

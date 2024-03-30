@@ -3,8 +3,31 @@ use chacha20poly1305::{
     ChaCha20Poly1305, Nonce
 };
 
-pub use chacha20poly1305::Error;
-pub type EncryptionError = Error;
+#[derive(Debug)]
+pub enum EncryptionError {
+    CiphertextTooShort { actual: usize, minimum: usize },
+    CipherFailure(chacha20poly1305::Error),
+}
+
+impl From<chacha20poly1305::Error> for EncryptionError {
+    fn from(error: chacha20poly1305::Error) -> Self {
+        Self::CipherFailure(error)
+    }
+}
+
+impl std::fmt::Display for EncryptionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CiphertextTooShort { actual, minimum } => write!(
+                formatter,
+                "ciphertext is {actual} bytes; at least {minimum} bytes are required"
+            ),
+            Self::CipherFailure(_) => write!(formatter, "cipher operation failed"),
+        }
+    }
+}
+
+impl std::error::Error for EncryptionError {}
 
 use sha2::{Sha256, Digest};
 
@@ -29,11 +52,20 @@ pub fn encrypt(data: &[u8], key: &EncryptionKey) -> Result<Vec<u8>, EncryptionEr
 }
 
 pub fn decrypt(data: &[u8], key: &EncryptionKey) -> Result<Vec<u8>, EncryptionError> {
-    let nonce = Nonce::from_slice(&data[data.len() - 12..]); // Extract 12-byte nonce
-    let data = &data[..data.len() - 12]; // Remove 12-byte nonce
+    const NONCE_LENGTH: usize = 12;
+
+    if data.len() < NONCE_LENGTH {
+        return Err(EncryptionError::CiphertextTooShort {
+            actual: data.len(),
+            minimum: NONCE_LENGTH,
+        });
+    }
+
+    let nonce = Nonce::from_slice(&data[data.len() - NONCE_LENGTH..]);
+    let data = &data[..data.len() - NONCE_LENGTH];
 
     let cipher = ChaCha20Poly1305::new(key);
-    let decrypted = cipher.decrypt(&nonce, data.as_ref())?;
+    let decrypted = cipher.decrypt(nonce, data.as_ref())?;
     Ok(decrypted)
 }
 
@@ -58,6 +90,20 @@ mod tests {
         let key = form_key(b"Hello World!");
         let decrypted = decrypt(&encrypted, &key);
         assert!(decrypted.is_err());
+    }
+
+    #[test]
+    fn test_reject_short_ciphertext() {
+        let key = form_key(b"Hello, world!");
+        let result = decrypt(&[0; 11], &key);
+
+        assert!(matches!(
+            result,
+            Err(EncryptionError::CiphertextTooShort {
+                actual: 11,
+                minimum: 12
+            })
+        ));
     }
 
     #[test]

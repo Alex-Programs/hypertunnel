@@ -47,7 +47,7 @@ pub fn load_config() -> Config {
 
     let config: Config = toml::from_str(&contents).unwrap();
 
-    debug!("Loaded configuration: {:?}", config);
+    debug!("Loaded configuration for {} user(s)", config.users.len());
 
     config
 }

@@ -6,9 +6,7 @@ members = [
     "libsocks",
     "libtransit",
     "server-monolith",
-    "libsecrets",
-    "integration-tests",
-    "hypertunnel_gui"
+    "libsecrets"
 ]
 
 workspace.resolver = "2"
