@@ -1,0 +1,733 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="2510" viewBox="0 0 1920 2510" role="img" aria-labelledby="title description">
+<title id="title">Hypertunnel — TCP over discrete HTTP</title>
+<desc id="description">A detailed continuous engineering schematic. Blue upload paths run down the local client, across an encrypted HTTP POST, and up the remote server. Teal download paths run down the server, across the response to a waiting client GET, and up the local client. Twenty numbered stages show TCP reads and writes, per-socket batching and routing, sequence-number assignment and waiting, Borsh serialization and deserialization, and authenticated encryption. Three example socket IDs retain their identities throughout the tunnel. Side rails connect the same application and destination sockets to their read and write stages. Supporting diagrams show session establishment, the HTTP request and response directions, and socket-record fields. Transfer details reflect the current implementation; sequence numbers do not imply retransmission or recovery from missing batches.</desc>
+<defs>
+<style>svg { font-family: Arial, 'Liberation Sans', sans-serif; } </style>
+<marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 10 5 0 10Z" fill="#174994"/></marker>
+<marker id="arrow-teal" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 10 5 0 10Z" fill="#116448"/></marker>
+<marker id="arrow-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10Z" fill="#111820"/></marker>
+<pattern id="firewall-hatch" width="12" height="12" patternUnits="userSpaceOnUse"><path d="M0 12 12 0" stroke="#d1cfc5" stroke-width="1"/></pattern>
+</defs>
+<rect x="0" y="0" width="1920" height="2510" rx="0" fill="#ffffff" stroke="none" stroke-width="0"/>
+<text id="text-1" x="40" y="48" font-size="17" fill="#111820" font-weight="700" letter-spacing="1.6">HYPERTUNNEL</text>
+<text id="text-2" x="40" y="125" font-size="66" fill="#111820" font-weight="700" text-anchor="start" font-family="'Courier New', 'Liberation Mono', monospace">TCP over discrete HTTP</text>
+<text id="text-3" x="1878" y="47" font-size="18" fill="#434950" font-weight="700" text-anchor="end" font-family="'Courier New', 'Liberation Mono', monospace">TRANSPORT SCHEMATIC</text>
+<rect x="1305" y="88" width="18" height="18" rx="0" fill="#2559a6" stroke="#2559a6" stroke-width="0"/>
+<text id="text-4" x="1334" y="105" font-size="22" fill="#111820" font-weight="400" text-anchor="start">Socket S01</text>
+<rect x="1490" y="88" width="18" height="18" rx="0" fill="#14755c" stroke="#14755c" stroke-width="0"/>
+<text id="text-5" x="1519" y="105" font-size="22" fill="#111820" font-weight="400" text-anchor="start">Socket S02</text>
+<rect x="1675" y="88" width="18" height="18" rx="0" fill="#9a6519" stroke="#9a6519" stroke-width="0"/>
+<text id="text-6" x="1704" y="105" font-size="22" fill="#111820" font-weight="400" text-anchor="start">Socket S03</text>
+<path d="M40 163H1880" fill="none" stroke="#111820" stroke-width="2.5" stroke-linejoin="round"/>
+<rect x="40" y="200" width="720" height="2130" rx="0" fill="#ffffff" stroke="#253b50" stroke-width="1.8"/>
+<rect x="1160" y="200" width="720" height="2130" rx="0" fill="#ffffff" stroke="#29463c" stroke-width="1.8"/>
+<rect x="800" y="200" width="320" height="2130" rx="0" fill="#f5f5f3" stroke="#777d81" stroke-width="1.2"/>
+<text id="text-7" x="90" y="256" font-size="38" fill="#111820" font-weight="700" text-anchor="start" font-family="'Courier New', 'Liberation Mono', monospace">LOCAL CLIENT</text>
+<text id="text-8" x="90" y="290" font-size="22" fill="#434950" font-weight="400" text-anchor="start">SOCKS4 · Tokio</text>
+<text id="text-9" x="1210" y="256" font-size="38" fill="#111820" font-weight="700" text-anchor="start" font-family="'Courier New', 'Liberation Mono', monospace">REMOTE SERVER</text>
+<text id="text-10" x="1210" y="290" font-size="22" fill="#434950" font-weight="400" text-anchor="start">Actix Web · Tokio</text>
+<text id="text-11" x="960" y="256" font-size="38" fill="#111820" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">HTTP</text>
+<text id="text-12" x="960" y="290" font-size="21" fill="#434950" font-weight="400" text-anchor="middle">Request / response</text>
+<rect x="90" y="313" width="620" height="90" rx="0" fill="#ffffff" stroke="#58636c" stroke-width="1.8"/>
+<text id="text-13" x="113" y="347" font-size="22" fill="#111820" font-weight="700" text-anchor="start">Application connections</text>
+<rect x="403" y="330" width="75" height="47" rx="0" fill="#e3e9f2" stroke="#2559a6" stroke-width="1.4"/>
+<text id="text-14" x="440" y="360" font-size="23" fill="#2559a6" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">S01</text>
+<rect x="494" y="330" width="75" height="47" rx="0" fill="#e0ebe1" stroke="#14755c" stroke-width="1.4"/>
+<text id="text-15" x="531" y="360" font-size="23" fill="#14755c" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">S02</text>
+<rect x="585" y="330" width="75" height="47" rx="0" fill="#f1e5cc" stroke="#9a6519" stroke-width="1.4"/>
+<text id="text-16" x="622" y="360" font-size="23" fill="#9a6519" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">S03</text>
+<rect x="1210" y="313" width="620" height="90" rx="0" fill="#ffffff" stroke="#58636c" stroke-width="1.8"/>
+<text id="text-17" x="1233" y="347" font-size="22" fill="#111820" font-weight="700" text-anchor="start">Destination connections</text>
+<rect x="1523" y="330" width="75" height="47" rx="0" fill="#e3e9f2" stroke="#2559a6" stroke-width="1.4"/>
+<text id="text-18" x="1560" y="360" font-size="23" fill="#2559a6" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">S01</text>
+<rect x="1614" y="330" width="75" height="47" rx="0" fill="#e0ebe1" stroke="#14755c" stroke-width="1.4"/>
+<text id="text-19" x="1651" y="360" font-size="23" fill="#14755c" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">S02</text>
+<rect x="1705" y="330" width="75" height="47" rx="0" fill="#f1e5cc" stroke="#9a6519" stroke-width="1.4"/>
+<text id="text-20" x="1742" y="360" font-size="23" fill="#9a6519" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">S03</text>
+<path d="M90 1518H65V358H89" fill="none" stroke="#116448" stroke-width="3" stroke-linejoin="round" marker-end="url(#arrow-teal)"/>
+<path d="M1830 358H1855V1518H1831" fill="none" stroke="#116448" stroke-width="3" stroke-linejoin="round" marker-end="url(#arrow-teal)"/>
+<text id="text-21" x="90" y="430" font-size="17" fill="#174994" font-weight="700" letter-spacing="1.6">UPLOAD</text>
+<text id="text-22" x="710" y="430" font-size="18" fill="#174994" font-weight="700" text-anchor="end" font-family="'Courier New', 'Liberation Mono', monospace">01 → 10</text>
+<text id="text-23" x="1210" y="430" font-size="17" fill="#174994" font-weight="700" letter-spacing="1.6">TO REMOTE TCP</text>
+<rect x="90" y="445" width="620" height="145" rx="0" fill="#ffffff" stroke="#58636c" stroke-width="1.8"/>
+<rect x="90" y="445" width="5" height="145" rx="0" fill="#174994" stroke="#174994" stroke-width="0"/>
+<rect x="110" y="464" width="38" height="34" rx="0" fill="#174994" stroke="#174994" stroke-width="0"/>
+<text id="text-24" x="129" y="488" font-size="19" fill="#ffffff" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">01</text>
+<text id="text-25" x="164" y="489" font-size="27" fill="#111820" font-weight="700" text-anchor="start">Read local TCP</text>
+<text id="text-26" x="133" y="523" font-size="18" fill="#2559a6" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">S01</text>
+<path d="M167 516H641" fill="none" stroke="#2559a6" stroke-width="2" stroke-linejoin="round"/>
+<rect x="195" y="505" width="84" height="23" rx="0" fill="#e3e9f2" stroke="#2559a6" stroke-width="1"/>
+<text id="text-27" x="237" y="522" font-size="16" fill="#2559a6" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">a1</text>
+<rect x="323" y="505" width="119" height="23" rx="0" fill="#e3e9f2" stroke="#2559a6" stroke-width="1"/>
+<text id="text-28" x="382.5" y="522" font-size="16" fill="#2559a6" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">a2</text>
+<rect x="485" y="505" width="88" height="23" rx="0" fill="#e3e9f2" stroke="#2559a6" stroke-width="1"/>
+<text id="text-29" x="529" y="522" font-size="16" fill="#2559a6" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">a3</text>
+<text id="text-30" x="133" y="551" font-size="18" fill="#14755c" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">S02</text>
+<path d="M167 544H641" fill="none" stroke="#14755c" stroke-width="2" stroke-linejoin="round"/>
+<rect x="195" y="533" width="84" height="23" rx="0" fill="#e0ebe1" stroke="#14755c" stroke-width="1"/>
+<text id="text-31" x="237" y="550" font-size="16" fill="#14755c" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">b1</text>
+<rect x="323" y="533" width="119" height="23" rx="0" fill="#e0ebe1" stroke="#14755c" stroke-width="1"/>
+<text id="text-32" x="382.5" y="550" font-size="16" fill="#14755c" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">b2</text>
+<rect x="485" y="533" width="88" height="23" rx="0" fill="#e0ebe1" stroke="#14755c" stroke-width="1"/>
+<text id="text-33" x="529" y="550" font-size="16" fill="#14755c" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">b3</text>
+<text id="text-34" x="133" y="579" font-size="18" fill="#9a6519" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">S03</text>
+<path d="M167 572H641" fill="none" stroke="#9a6519" stroke-width="2" stroke-linejoin="round"/>
+<rect x="195" y="561" width="84" height="23" rx="0" fill="#f1e5cc" stroke="#9a6519" stroke-width="1"/>
+<text id="text-35" x="237" y="578" font-size="16" fill="#9a6519" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">c1</text>
+<rect x="323" y="561" width="119" height="23" rx="0" fill="#f1e5cc" stroke="#9a6519" stroke-width="1"/>
+<text id="text-36" x="382.5" y="578" font-size="16" fill="#9a6519" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">c2</text>
+<rect x="485" y="561" width="88" height="23" rx="0" fill="#f1e5cc" stroke="#9a6519" stroke-width="1"/>
+<text id="text-37" x="529" y="578" font-size="16" fill="#9a6519" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">c3</text>
+<rect x="90" y="630" width="620" height="210" rx="0" fill="#ffffff" stroke="#58636c" stroke-width="1.8"/>
+<rect x="90" y="630" width="5" height="210" rx="0" fill="#174994" stroke="#174994" stroke-width="0"/>
+<rect x="110" y="649" width="38" height="34" rx="0" fill="#174994" stroke="#174994" stroke-width="0"/>
+<text id="text-38" x="129" y="673" font-size="19" fill="#ffffff" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">02</text>
+<text id="text-39" x="164" y="674" font-size="27" fill="#111820" font-weight="700" text-anchor="start">Assemble a batch</text>
+<rect x="399" y="697" width="282" height="110" fill="#ffffff" stroke="#174994" stroke-width="1.8"/>
+<text id="text-40" x="672" y="691" font-size="13" fill="#174994" font-weight="700" text-anchor="end" letter-spacing="1">ONE BATCH</text>
+<text id="text-41" x="132" y="720" font-size="18" fill="#2559a6" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">S01</text>
+<rect x="168" y="702" width="52" height="25" rx="0" fill="#e3e9f2" stroke="#2559a6" stroke-width="1"/>
+<text id="text-42" x="194" y="720" font-size="15" fill="#2559a6" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">a1</text>
+<rect x="229" y="702" width="52" height="25" rx="0" fill="#e3e9f2" stroke="#2559a6" stroke-width="1"/>
+<text id="text-43" x="255" y="720" font-size="15" fill="#2559a6" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">a2</text>
+<rect x="290" y="702" width="52" height="25" rx="0" fill="#e3e9f2" stroke="#2559a6" stroke-width="1"/>
+<text id="text-44" x="316" y="720" font-size="15" fill="#2559a6" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">a3</text>
+<path d="M357 715H395" fill="none" stroke="#111820" stroke-width="1.6" stroke-linejoin="round" marker-end="url(#arrow-ink)"/>
+<rect x="409" y="702" width="262" height="25" rx="0" fill="#e3e9f2" stroke="#2559a6" stroke-width="1.3"/>
+<text id="text-45" x="422" y="720" font-size="16" fill="#2559a6" font-weight="700" text-anchor="start" font-family="'Courier New', 'Liberation Mono', monospace">S01</text>
+<text id="text-46" x="496" y="720" font-size="16" fill="#2559a6" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">a1</text>
+<text id="text-47" x="558" y="720" font-size="16" fill="#2559a6" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">a2</text>
+<text id="text-48" x="620" y="720" font-size="16" fill="#2559a6" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">a3</text>
+<text id="text-49" x="132" y="755" font-size="18" fill="#14755c" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">S02</text>
+<rect x="168" y="737" width="52" height="25" rx="0" fill="#e0ebe1" stroke="#14755c" stroke-width="1"/>
+<text id="text-50" x="194" y="755" font-size="15" fill="#14755c" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">b1</text>
+<rect x="229" y="737" width="52" height="25" rx="0" fill="#e0ebe1" stroke="#14755c" stroke-width="1"/>
+<text id="text-51" x="255" y="755" font-size="15" fill="#14755c" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">b2</text>
+<rect x="290" y="737" width="52" height="25" rx="0" fill="#e0ebe1" stroke="#14755c" stroke-width="1"/>
+<text id="text-52" x="316" y="755" font-size="15" fill="#14755c" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">b3</text>
+<path d="M357 750H395" fill="none" stroke="#111820" stroke-width="1.6" stroke-linejoin="round" marker-end="url(#arrow-ink)"/>
+<rect x="409" y="737" width="262" height="25" rx="0" fill="#e0ebe1" stroke="#14755c" stroke-width="1.3"/>
+<text id="text-53" x="422" y="755" font-size="16" fill="#14755c" font-weight="700" text-anchor="start" font-family="'Courier New', 'Liberation Mono', monospace">S02</text>
+<text id="text-54" x="496" y="755" font-size="16" fill="#14755c" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">b1</text>
+<text id="text-55" x="558" y="755" font-size="16" fill="#14755c" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">b2</text>
+<text id="text-56" x="620" y="755" font-size="16" fill="#14755c" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">b3</text>
+<text id="text-57" x="132" y="790" font-size="18" fill="#9a6519" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">S03</text>
+<rect x="168" y="772" width="52" height="25" rx="0" fill="#f1e5cc" stroke="#9a6519" stroke-width="1"/>
+<text id="text-58" x="194" y="790" font-size="15" fill="#9a6519" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">c1</text>
+<rect x="229" y="772" width="52" height="25" rx="0" fill="#f1e5cc" stroke="#9a6519" stroke-width="1"/>
+<text id="text-59" x="255" y="790" font-size="15" fill="#9a6519" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">c2</text>
+<rect x="290" y="772" width="52" height="25" rx="0" fill="#f1e5cc" stroke="#9a6519" stroke-width="1"/>
+<text id="text-60" x="316" y="790" font-size="15" fill="#9a6519" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">c3</text>
+<path d="M357 785H395" fill="none" stroke="#111820" stroke-width="1.6" stroke-linejoin="round" marker-end="url(#arrow-ink)"/>
+<rect x="409" y="772" width="262" height="25" rx="0" fill="#f1e5cc" stroke="#9a6519" stroke-width="1.3"/>
+<text id="text-61" x="422" y="790" font-size="16" fill="#9a6519" font-weight="700" text-anchor="start" font-family="'Courier New', 'Liberation Mono', monospace">S03</text>
+<text id="text-62" x="496" y="790" font-size="16" fill="#9a6519" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">c1</text>
+<text id="text-63" x="558" y="790" font-size="16" fill="#9a6519" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">c2</text>
+<text id="text-64" x="620" y="790" font-size="16" fill="#9a6519" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">c3</text>
+<path d="M110 811H690" fill="none" stroke="#cbcfc6" stroke-width="1" stroke-linejoin="round"/>
+<text id="text-65" x="114" y="831" font-size="19" fill="#434950" font-weight="400" text-anchor="start">Pending records · &gt;32 MiB or elapsed &gt;10 ms</text>
+<rect x="90" y="880" width="620" height="64" rx="0" fill="#ffffff" stroke="#58636c" stroke-width="1.8"/>
+<rect x="90" y="880" width="5" height="64" rx="0" fill="#174994" stroke="#174994" stroke-width="0"/>
+<rect x="110" y="899" width="38" height="34" rx="0" fill="#174994" stroke="#174994" stroke-width="0"/>
+<text id="text-66" x="129" y="923" font-size="19" fill="#ffffff" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">03</text>
+<text id="text-67" x="164" y="924" font-size="27" fill="#111820" font-weight="700" text-anchor="start">Assign sequence number</text>
+<text id="text-68" x="679" y="922" font-size="22" fill="#174994" font-weight="700" text-anchor="end" font-family="'Courier New', 'Liberation Mono', monospace">n++</text>
+<rect x="90" y="984" width="620" height="126" rx="0" fill="#ffffff" stroke="#58636c" stroke-width="1.8"/>
+<rect x="90" y="984" width="5" height="126" rx="0" fill="#174994" stroke="#174994" stroke-width="0"/>
+<rect x="110" y="1003" width="38" height="34" rx="0" fill="#174994" stroke="#174994" stroke-width="0"/>
+<text id="text-69" x="129" y="1027" font-size="19" fill="#ffffff" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">04</text>
+<text id="text-70" x="164" y="1028" font-size="27" fill="#111820" font-weight="700" text-anchor="start">Serialize with Borsh</text>
+<rect x="114" y="1050" width="148" height="38" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="1"/>
+<text id="text-71" x="188" y="1076" font-size="18" fill="#111820" font-weight="400" text-anchor="middle">metadata</text>
+<rect x="324" y="1050" width="230" height="38" rx="0" fill="#e8f0eb" stroke="#79828a" stroke-width="1"/>
+<text id="text-72" x="439" y="1076" font-size="17" fill="#111820" font-weight="400" text-anchor="middle">upstream socket records</text>
+<rect x="554" y="1050" width="132" height="38" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="1"/>
+<text id="text-73" x="620" y="1076" font-size="17" fill="#111820" font-weight="400" text-anchor="middle">payload size</text>
+<rect x="90" y="1150" width="620" height="130" rx="0" fill="#ffffff" stroke="#58636c" stroke-width="1.8"/>
+<rect x="90" y="1150" width="5" height="130" rx="0" fill="#174994" stroke="#174994" stroke-width="0"/>
+<rect x="110" y="1169" width="38" height="34" rx="0" fill="#174994" stroke="#174994" stroke-width="0"/>
+<text id="text-74" x="129" y="1193" font-size="19" fill="#ffffff" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">05</text>
+<text id="text-75" x="164" y="1194" font-size="27" fill="#111820" font-weight="700" text-anchor="start">Encrypt</text>
+<text id="text-76" x="686" y="1193" font-size="17" fill="#434950" font-weight="400" text-anchor="end">ChaCha20-Poly1305</text>
+<rect x="114" y="1215" width="342" height="42" rx="0" fill="#1c2b3b" stroke="#79828a" stroke-width="1"/>
+<text id="text-77" x="285" y="1243" font-size="18" fill="#ffffff" font-weight="400" text-anchor="middle">ciphertext</text>
+<rect x="456" y="1215" width="126" height="42" rx="0" fill="#dce9e0" stroke="#79828a" stroke-width="1"/>
+<text id="text-78" x="519" y="1243" font-size="17" fill="#111820" font-weight="400" text-anchor="middle">tag · 16 B</text>
+<rect x="582" y="1215" width="104" height="42" rx="0" fill="#eaedef" stroke="#79828a" stroke-width="1"/>
+<text id="text-79" x="634" y="1243" font-size="15" fill="#111820" font-weight="400" text-anchor="middle">nonce · 12 B</text>
+<rect x="1210" y="445" width="620" height="145" rx="0" fill="#ffffff" stroke="#58636c" stroke-width="1.8"/>
+<rect x="1210" y="445" width="5" height="145" rx="0" fill="#174994" stroke="#174994" stroke-width="0"/>
+<rect x="1230" y="464" width="38" height="34" rx="0" fill="#174994" stroke="#174994" stroke-width="0"/>
+<text id="text-80" x="1249" y="488" font-size="19" fill="#ffffff" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">10</text>
+<text id="text-81" x="1284" y="489" font-size="27" fill="#111820" font-weight="700" text-anchor="start">Write remote TCP</text>
+<text id="text-82" x="1253" y="523" font-size="18" fill="#2559a6" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">S01</text>
+<path d="M1287 516H1761" fill="none" stroke="#2559a6" stroke-width="2"/>
+<rect x="1316" y="505" width="144" height="23" fill="#e3e9f2" stroke="#2559a6" stroke-width="1"/>
+<text id="text-83" x="1388" y="522" font-size="16" fill="#2559a6" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">a1</text>
+<rect x="1460" y="505" width="144" height="23" fill="#e3e9f2" stroke="#2559a6" stroke-width="1"/>
+<text id="text-84" x="1532" y="522" font-size="16" fill="#2559a6" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">a2</text>
+<rect x="1604" y="505" width="144" height="23" fill="#e3e9f2" stroke="#2559a6" stroke-width="1"/>
+<text id="text-85" x="1676" y="522" font-size="16" fill="#2559a6" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">a3</text>
+<text id="text-86" x="1253" y="551" font-size="18" fill="#14755c" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">S02</text>
+<path d="M1287 544H1761" fill="none" stroke="#14755c" stroke-width="2"/>
+<rect x="1316" y="533" width="144" height="23" fill="#e0ebe1" stroke="#14755c" stroke-width="1"/>
+<text id="text-87" x="1388" y="550" font-size="16" fill="#14755c" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">b1</text>
+<rect x="1460" y="533" width="144" height="23" fill="#e0ebe1" stroke="#14755c" stroke-width="1"/>
+<text id="text-88" x="1532" y="550" font-size="16" fill="#14755c" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">b2</text>
+<rect x="1604" y="533" width="144" height="23" fill="#e0ebe1" stroke="#14755c" stroke-width="1"/>
+<text id="text-89" x="1676" y="550" font-size="16" fill="#14755c" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">b3</text>
+<text id="text-90" x="1253" y="579" font-size="18" fill="#9a6519" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">S03</text>
+<path d="M1287 572H1761" fill="none" stroke="#9a6519" stroke-width="2"/>
+<rect x="1316" y="561" width="144" height="23" fill="#f1e5cc" stroke="#9a6519" stroke-width="1"/>
+<text id="text-91" x="1388" y="578" font-size="16" fill="#9a6519" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">c1</text>
+<rect x="1460" y="561" width="144" height="23" fill="#f1e5cc" stroke="#9a6519" stroke-width="1"/>
+<text id="text-92" x="1532" y="578" font-size="16" fill="#9a6519" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">c2</text>
+<rect x="1604" y="561" width="144" height="23" fill="#f1e5cc" stroke="#9a6519" stroke-width="1"/>
+<text id="text-93" x="1676" y="578" font-size="16" fill="#9a6519" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">c3</text>
+<rect x="1210" y="630" width="620" height="210" rx="0" fill="#ffffff" stroke="#58636c" stroke-width="1.8"/>
+<rect x="1210" y="630" width="5" height="210" rx="0" fill="#174994" stroke="#174994" stroke-width="0"/>
+<rect x="1230" y="649" width="38" height="34" rx="0" fill="#174994" stroke="#174994" stroke-width="0"/>
+<text id="text-94" x="1249" y="673" font-size="19" fill="#ffffff" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">09</text>
+<text id="text-95" x="1284" y="674" font-size="27" fill="#111820" font-weight="700" text-anchor="start">Route records by socket ID</text>
+<rect x="1236" y="702" width="232" height="94" rx="0" fill="#f1f2f4" stroke="#79828a" stroke-width="1"/>
+<rect x="1245" y="711" width="214" height="22" rx="0" fill="#e3e9f2" stroke="#2559a6" stroke-width="0.8"/>
+<text id="text-96" x="1256" y="727" font-size="15" fill="#2559a6" font-weight="700" text-anchor="start" font-family="'Courier New', 'Liberation Mono', monospace">S01</text>
+<text id="text-97" x="1356" y="727" font-size="15" fill="#2559a6" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">a1  a2  a3</text>
+<path d="M1469 722H1491V714H1535" fill="none" stroke="#2559a6" stroke-width="1.8" stroke-linejoin="round"/>
+<rect x="1542" y="702" width="246" height="25" rx="0" fill="#e3e9f2" stroke="#2559a6" stroke-width="1.2"/>
+<text id="text-98" x="1555" y="720" font-size="16" fill="#2559a6" font-weight="700" text-anchor="start" font-family="'Courier New', 'Liberation Mono', monospace">S01</text>
+<text id="text-99" x="1682" y="720" font-size="16" fill="#2559a6" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">a1  a2  a3</text>
+<rect x="1245" y="737" width="214" height="22" rx="0" fill="#e0ebe1" stroke="#14755c" stroke-width="0.8"/>
+<text id="text-100" x="1256" y="753" font-size="15" fill="#14755c" font-weight="700" text-anchor="start" font-family="'Courier New', 'Liberation Mono', monospace">S02</text>
+<text id="text-101" x="1356" y="753" font-size="15" fill="#14755c" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">b1  b2  b3</text>
+<path d="M1469 748H1499V749H1535" fill="none" stroke="#14755c" stroke-width="1.8" stroke-linejoin="round"/>
+<rect x="1542" y="737" width="246" height="25" rx="0" fill="#e0ebe1" stroke="#14755c" stroke-width="1.2"/>
+<text id="text-102" x="1555" y="755" font-size="16" fill="#14755c" font-weight="700" text-anchor="start" font-family="'Courier New', 'Liberation Mono', monospace">S02</text>
+<text id="text-103" x="1682" y="755" font-size="16" fill="#14755c" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">b1  b2  b3</text>
+<rect x="1245" y="763" width="214" height="22" rx="0" fill="#f1e5cc" stroke="#9a6519" stroke-width="0.8"/>
+<text id="text-104" x="1256" y="779" font-size="15" fill="#9a6519" font-weight="700" text-anchor="start" font-family="'Courier New', 'Liberation Mono', monospace">S03</text>
+<text id="text-105" x="1356" y="779" font-size="15" fill="#9a6519" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">c1  c2  c3</text>
+<path d="M1469 774H1507V784H1535" fill="none" stroke="#9a6519" stroke-width="1.8" stroke-linejoin="round"/>
+<rect x="1542" y="772" width="246" height="25" rx="0" fill="#f1e5cc" stroke="#9a6519" stroke-width="1.2"/>
+<text id="text-106" x="1555" y="790" font-size="16" fill="#9a6519" font-weight="700" text-anchor="start" font-family="'Courier New', 'Liberation Mono', monospace">S03</text>
+<text id="text-107" x="1682" y="790" font-size="16" fill="#9a6519" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">c1  c2  c3</text>
+<path d="M1230 811H1810" fill="none" stroke="#cbcfc6" stroke-width="1" stroke-linejoin="round"/>
+<text id="text-108" x="1234" y="831" font-size="17" fill="#434950" font-weight="400" text-anchor="start">Socket ID → TCP task · open on first record</text>
+<rect x="1210" y="880" width="620" height="64" rx="0" fill="#ffffff" stroke="#58636c" stroke-width="1.8"/>
+<rect x="1210" y="880" width="5" height="64" rx="0" fill="#174994" stroke="#174994" stroke-width="0"/>
+<rect x="1230" y="899" width="38" height="34" rx="0" fill="#174994" stroke="#174994" stroke-width="0"/>
+<text id="text-109" x="1249" y="923" font-size="19" fill="#ffffff" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">08</text>
+<text id="text-110" x="1284" y="924" font-size="27" fill="#111820" font-weight="700" text-anchor="start">Wait for sequence number</text>
+<text id="text-111" x="1799" y="922" font-size="22" fill="#174994" font-weight="700" text-anchor="end" font-family="'Courier New', 'Liberation Mono', monospace">n = next</text>
+<rect x="1210" y="984" width="620" height="126" rx="0" fill="#ffffff" stroke="#58636c" stroke-width="1.8"/>
+<rect x="1210" y="984" width="5" height="126" rx="0" fill="#174994" stroke="#174994" stroke-width="0"/>
+<rect x="1230" y="1003" width="38" height="34" rx="0" fill="#174994" stroke="#174994" stroke-width="0"/>
+<text id="text-112" x="1249" y="1027" font-size="19" fill="#ffffff" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">07</text>
+<text id="text-113" x="1284" y="1028" font-size="27" fill="#111820" font-weight="700" text-anchor="start">Deserialize with Borsh</text>
+<rect x="1234" y="1050" width="148" height="38" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="1"/>
+<text id="text-114" x="1308" y="1076" font-size="18" fill="#111820" font-weight="400" text-anchor="middle">metadata</text>
+<rect x="1444" y="1050" width="230" height="38" rx="0" fill="#e8f0eb" stroke="#79828a" stroke-width="1"/>
+<text id="text-115" x="1559" y="1076" font-size="17" fill="#111820" font-weight="400" text-anchor="middle">upstream socket records</text>
+<rect x="1674" y="1050" width="132" height="38" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="1"/>
+<text id="text-116" x="1740" y="1076" font-size="17" fill="#111820" font-weight="400" text-anchor="middle">payload size</text>
+<rect x="1210" y="1150" width="620" height="130" rx="0" fill="#ffffff" stroke="#58636c" stroke-width="1.8"/>
+<rect x="1210" y="1150" width="5" height="130" rx="0" fill="#174994" stroke="#174994" stroke-width="0"/>
+<rect x="1230" y="1169" width="38" height="34" rx="0" fill="#174994" stroke="#174994" stroke-width="0"/>
+<text id="text-117" x="1249" y="1193" font-size="19" fill="#ffffff" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">06</text>
+<text id="text-118" x="1284" y="1194" font-size="27" fill="#111820" font-weight="700" text-anchor="start">Verify and decrypt</text>
+<text id="text-119" x="1806" y="1193" font-size="17" fill="#434950" font-weight="400" text-anchor="end">ChaCha20-Poly1305</text>
+<rect x="1234" y="1215" width="342" height="42" rx="0" fill="#1c2b3b" stroke="#79828a" stroke-width="1"/>
+<text id="text-120" x="1405" y="1243" font-size="18" fill="#ffffff" font-weight="400" text-anchor="middle">ciphertext</text>
+<rect x="1576" y="1215" width="126" height="42" rx="0" fill="#dce9e0" stroke="#79828a" stroke-width="1"/>
+<text id="text-121" x="1639" y="1243" font-size="17" fill="#111820" font-weight="400" text-anchor="middle">tag · 16 B</text>
+<rect x="1702" y="1215" width="104" height="42" rx="0" fill="#eaedef" stroke="#79828a" stroke-width="1"/>
+<text id="text-122" x="1754" y="1243" font-size="15" fill="#111820" font-weight="400" text-anchor="middle">nonce · 12 B</text>
+<path d="M400 403V441" fill="none" stroke="#174994" stroke-width="3" stroke-linejoin="round" marker-end="url(#arrow-blue)"/>
+<path d="M1520 445V407" fill="none" stroke="#174994" stroke-width="3" stroke-linejoin="round" marker-end="url(#arrow-blue)"/>
+<path d="M400 590V626" fill="none" stroke="#174994" stroke-width="3" stroke-linejoin="round" marker-end="url(#arrow-blue)"/>
+<path d="M1520 630V594" fill="none" stroke="#174994" stroke-width="3" stroke-linejoin="round" marker-end="url(#arrow-blue)"/>
+<path d="M400 840V876" fill="none" stroke="#174994" stroke-width="3" stroke-linejoin="round" marker-end="url(#arrow-blue)"/>
+<path d="M1520 880V844" fill="none" stroke="#174994" stroke-width="3" stroke-linejoin="round" marker-end="url(#arrow-blue)"/>
+<path d="M400 944V980" fill="none" stroke="#174994" stroke-width="3" stroke-linejoin="round" marker-end="url(#arrow-blue)"/>
+<path d="M1520 984V948" fill="none" stroke="#174994" stroke-width="3" stroke-linejoin="round" marker-end="url(#arrow-blue)"/>
+<path d="M400 1110V1146" fill="none" stroke="#174994" stroke-width="3" stroke-linejoin="round" marker-end="url(#arrow-blue)"/>
+<path d="M1520 1150V1114" fill="none" stroke="#174994" stroke-width="3" stroke-linejoin="round" marker-end="url(#arrow-blue)"/>
+<path d="M723 880H738V1280H723" fill="none" stroke="#657d90" stroke-width="2.5" stroke-linejoin="round"/>
+<text id="text-123" x="710" y="869" font-size="19" fill="#434950" font-weight="400" text-anchor="end">Parallel upload workers</text>
+<path d="M1197 880H1182V1280H1197" fill="none" stroke="#657d90" stroke-width="2.5" stroke-linejoin="round"/>
+<text id="text-124" x="1210" y="869" font-size="19" fill="#434950" font-weight="400" text-anchor="start">POST handlers</text>
+<rect x="789" y="342" width="342" height="248" rx="0" fill="#ffffff" stroke="#626c75" stroke-width="1.3"/>
+<rect x="789" y="342" width="342" height="67" rx="0" fill="url(#firewall-hatch)" stroke="none" stroke-width="0"/>
+<text id="text-125" x="960" y="384" font-size="26" fill="#111820" font-weight="700" text-anchor="middle">DPI FIREWALL</text>
+<text id="text-126" x="846" y="444" font-size="21" fill="#111820" font-weight="700" text-anchor="start">TLS interception</text>
+<path d="M846 465H1074" fill="none" stroke="#bfc4ba" stroke-width="1" stroke-linejoin="round"/>
+<text id="text-127" x="807" y="503" font-size="18" fill="#434950" font-weight="400" text-anchor="start">Request streaming</text>
+<text id="text-128" x="1111" y="503" font-size="18" fill="#111820" font-weight="700" text-anchor="end">BUFFERED</text>
+<text id="text-129" x="807" y="550" font-size="18" fill="#434950" font-weight="400" text-anchor="start">WebSockets / SSE</text>
+<text id="text-130" x="1111" y="550" font-size="18" fill="#111820" font-weight="700" text-anchor="end">BLOCKED</text>
+<rect x="825" y="678" width="270" height="296" rx="0" fill="#ffffff" stroke="#626c75" stroke-width="1.3"/>
+<text id="text-131" x="845" y="712" font-size="17" fill="#111820" font-weight="700" letter-spacing="1.6">SESSION SETUP</text>
+<text id="text-132" x="845" y="751" font-size="20" fill="#111820" font-weight="700" text-anchor="start" font-family="'Courier New', 'Liberation Mono', monospace">POST /submit</text>
+<path d="M845 773H1075" fill="none" stroke="#111820" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-ink)"/>
+<text id="text-133" x="845" y="805" font-size="18" fill="#434950" font-weight="400" text-anchor="start">Encrypted greeting</text>
+<path d="M1075 839H845" fill="none" stroke="#111820" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-ink)"/>
+<text id="text-134" x="845" y="869" font-size="18" fill="#434950" font-weight="400" text-anchor="start">Encrypted acceptance</text>
+<path d="M845 890H1075" fill="none" stroke="#c6c9bf" stroke-width="1" stroke-linejoin="round"/>
+<text id="text-135" x="845" y="925" font-size="20" fill="#111820" font-weight="700" text-anchor="start">Cookie token</text>
+<text id="text-136" x="845" y="950" font-size="18" fill="#434950" font-weight="400" text-anchor="start">→ server session + key</text>
+<text id="text-137" x="829" y="1063" font-size="17" fill="#174994" font-weight="700" letter-spacing="1.6">UPLOAD REQUEST</text>
+<text id="text-138" x="960" y="1101" font-size="27" fill="#174994" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">POST</text>
+<text id="text-139" x="960" y="1132" font-size="21" fill="#111820" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">/upload/segment/{…}</text>
+<path d="M710 1216H1204" fill="none" stroke="#174994" stroke-width="4" stroke-linejoin="round" marker-end="url(#arrow-blue)"/>
+<rect x="886" y="1199" width="43" height="34" rx="0" fill="#1c2b3b" stroke="#ffffff" stroke-width="2"/>
+<rect x="938" y="1199" width="43" height="34" rx="0" fill="#1c2b3b" stroke="#ffffff" stroke-width="2"/>
+<rect x="990" y="1199" width="43" height="34" rx="0" fill="#1c2b3b" stroke="#ffffff" stroke-width="2"/>
+<text id="text-140" x="960" y="1265" font-size="21" fill="#111820" font-weight="400" text-anchor="middle">Encrypted request body</text>
+<path d="M1182 1280V1320H738V1280" fill="none" stroke="#111820" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#arrow-ink)"/>
+<text id="text-141" x="960" y="1305" font-size="20" fill="#434950" font-weight="400" text-anchor="middle">POST reply · 200</text>
+<path d="M90 1360H710" fill="none" stroke="#253b50" stroke-width="1.4" stroke-linejoin="round"/>
+<path d="M1210 1360H1830" fill="none" stroke="#29463c" stroke-width="1.4" stroke-linejoin="round"/>
+<text id="text-142" x="90" y="1397" font-size="19" fill="#116448" font-weight="700" text-anchor="start">RETURN TO APPLICATIONS</text>
+<text id="text-143" x="1210" y="1397" font-size="19" fill="#116448" font-weight="700" text-anchor="start">DOWNLOAD</text>
+<text id="text-144" x="1830" y="1397" font-size="18" fill="#116448" font-weight="700" text-anchor="end" font-family="'Courier New', 'Liberation Mono', monospace">11 → 20</text>
+<rect x="1210" y="1450" width="620" height="145" rx="0" fill="#ffffff" stroke="#58636c" stroke-width="1.8"/>
+<rect x="1210" y="1450" width="5" height="145" rx="0" fill="#116448" stroke="#116448" stroke-width="0"/>
+<rect x="1230" y="1469" width="38" height="34" rx="0" fill="#116448" stroke="#116448" stroke-width="0"/>
+<text id="text-145" x="1249" y="1493" font-size="19" fill="#ffffff" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">11</text>
+<text id="text-146" x="1284" y="1494" font-size="27" fill="#111820" font-weight="700" text-anchor="start">Read remote TCP</text>
+<text id="text-147" x="1253" y="1528" font-size="18" fill="#2559a6" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">S01</text>
+<path d="M1287 1521H1761" fill="none" stroke="#2559a6" stroke-width="2" stroke-linejoin="round"/>
+<rect x="1315" y="1510" width="84" height="23" rx="0" fill="#e3e9f2" stroke="#2559a6" stroke-width="1"/>
+<text id="text-148" x="1357" y="1527" font-size="16" fill="#2559a6" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">ra1</text>
+<rect x="1443" y="1510" width="119" height="23" rx="0" fill="#e3e9f2" stroke="#2559a6" stroke-width="1"/>
+<text id="text-149" x="1502.5" y="1527" font-size="16" fill="#2559a6" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">ra2</text>
+<rect x="1605" y="1510" width="88" height="23" rx="0" fill="#e3e9f2" stroke="#2559a6" stroke-width="1"/>
+<text id="text-150" x="1649" y="1527" font-size="16" fill="#2559a6" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">ra3</text>
+<text id="text-151" x="1253" y="1556" font-size="18" fill="#14755c" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">S02</text>
+<path d="M1287 1549H1761" fill="none" stroke="#14755c" stroke-width="2" stroke-linejoin="round"/>
+<rect x="1315" y="1538" width="84" height="23" rx="0" fill="#e0ebe1" stroke="#14755c" stroke-width="1"/>
+<text id="text-152" x="1357" y="1555" font-size="16" fill="#14755c" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">rb1</text>
+<rect x="1443" y="1538" width="119" height="23" rx="0" fill="#e0ebe1" stroke="#14755c" stroke-width="1"/>
+<text id="text-153" x="1502.5" y="1555" font-size="16" fill="#14755c" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">rb2</text>
+<rect x="1605" y="1538" width="88" height="23" rx="0" fill="#e0ebe1" stroke="#14755c" stroke-width="1"/>
+<text id="text-154" x="1649" y="1555" font-size="16" fill="#14755c" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">rb3</text>
+<text id="text-155" x="1253" y="1584" font-size="18" fill="#9a6519" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">S03</text>
+<path d="M1287 1577H1761" fill="none" stroke="#9a6519" stroke-width="2" stroke-linejoin="round"/>
+<rect x="1315" y="1566" width="84" height="23" rx="0" fill="#f1e5cc" stroke="#9a6519" stroke-width="1"/>
+<text id="text-156" x="1357" y="1583" font-size="16" fill="#9a6519" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">rc1</text>
+<rect x="1443" y="1566" width="119" height="23" rx="0" fill="#f1e5cc" stroke="#9a6519" stroke-width="1"/>
+<text id="text-157" x="1502.5" y="1583" font-size="16" fill="#9a6519" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">rc2</text>
+<rect x="1605" y="1566" width="88" height="23" rx="0" fill="#f1e5cc" stroke="#9a6519" stroke-width="1"/>
+<text id="text-158" x="1649" y="1583" font-size="16" fill="#9a6519" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">rc3</text>
+<rect x="1210" y="1635" width="620" height="210" rx="0" fill="#ffffff" stroke="#58636c" stroke-width="1.8"/>
+<rect x="1210" y="1635" width="5" height="210" rx="0" fill="#116448" stroke="#116448" stroke-width="0"/>
+<rect x="1230" y="1654" width="38" height="34" rx="0" fill="#116448" stroke="#116448" stroke-width="0"/>
+<text id="text-159" x="1249" y="1678" font-size="19" fill="#ffffff" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">12</text>
+<text id="text-160" x="1284" y="1679" font-size="27" fill="#111820" font-weight="700" text-anchor="start">Assemble a batch</text>
+<rect x="1519" y="1702" width="282" height="110" fill="#ffffff" stroke="#116448" stroke-width="1.8"/>
+<text id="text-161" x="1792" y="1696" font-size="13" fill="#116448" font-weight="700" text-anchor="end" letter-spacing="1">ONE BATCH</text>
+<text id="text-162" x="1252" y="1725" font-size="18" fill="#2559a6" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">S01</text>
+<rect x="1288" y="1707" width="52" height="25" rx="0" fill="#e3e9f2" stroke="#2559a6" stroke-width="1"/>
+<text id="text-163" x="1314" y="1725" font-size="15" fill="#2559a6" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">ra1</text>
+<rect x="1349" y="1707" width="52" height="25" rx="0" fill="#e3e9f2" stroke="#2559a6" stroke-width="1"/>
+<text id="text-164" x="1375" y="1725" font-size="15" fill="#2559a6" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">ra2</text>
+<rect x="1410" y="1707" width="52" height="25" rx="0" fill="#e3e9f2" stroke="#2559a6" stroke-width="1"/>
+<text id="text-165" x="1436" y="1725" font-size="15" fill="#2559a6" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">ra3</text>
+<path d="M1477 1720H1515" fill="none" stroke="#111820" stroke-width="1.6" stroke-linejoin="round" marker-end="url(#arrow-ink)"/>
+<rect x="1529" y="1707" width="262" height="25" rx="0" fill="#e3e9f2" stroke="#2559a6" stroke-width="1.3"/>
+<text id="text-166" x="1542" y="1725" font-size="16" fill="#2559a6" font-weight="700" text-anchor="start" font-family="'Courier New', 'Liberation Mono', monospace">S01</text>
+<text id="text-167" x="1616" y="1725" font-size="16" fill="#2559a6" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">ra1</text>
+<text id="text-168" x="1678" y="1725" font-size="16" fill="#2559a6" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">ra2</text>
+<text id="text-169" x="1740" y="1725" font-size="16" fill="#2559a6" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">ra3</text>
+<text id="text-170" x="1252" y="1760" font-size="18" fill="#14755c" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">S02</text>
+<rect x="1288" y="1742" width="52" height="25" rx="0" fill="#e0ebe1" stroke="#14755c" stroke-width="1"/>
+<text id="text-171" x="1314" y="1760" font-size="15" fill="#14755c" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">rb1</text>
+<rect x="1349" y="1742" width="52" height="25" rx="0" fill="#e0ebe1" stroke="#14755c" stroke-width="1"/>
+<text id="text-172" x="1375" y="1760" font-size="15" fill="#14755c" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">rb2</text>
+<rect x="1410" y="1742" width="52" height="25" rx="0" fill="#e0ebe1" stroke="#14755c" stroke-width="1"/>
+<text id="text-173" x="1436" y="1760" font-size="15" fill="#14755c" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">rb3</text>
+<path d="M1477 1755H1515" fill="none" stroke="#111820" stroke-width="1.6" stroke-linejoin="round" marker-end="url(#arrow-ink)"/>
+<rect x="1529" y="1742" width="262" height="25" rx="0" fill="#e0ebe1" stroke="#14755c" stroke-width="1.3"/>
+<text id="text-174" x="1542" y="1760" font-size="16" fill="#14755c" font-weight="700" text-anchor="start" font-family="'Courier New', 'Liberation Mono', monospace">S02</text>
+<text id="text-175" x="1616" y="1760" font-size="16" fill="#14755c" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">rb1</text>
+<text id="text-176" x="1678" y="1760" font-size="16" fill="#14755c" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">rb2</text>
+<text id="text-177" x="1740" y="1760" font-size="16" fill="#14755c" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">rb3</text>
+<text id="text-178" x="1252" y="1795" font-size="18" fill="#9a6519" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">S03</text>
+<rect x="1288" y="1777" width="52" height="25" rx="0" fill="#f1e5cc" stroke="#9a6519" stroke-width="1"/>
+<text id="text-179" x="1314" y="1795" font-size="15" fill="#9a6519" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">rc1</text>
+<rect x="1349" y="1777" width="52" height="25" rx="0" fill="#f1e5cc" stroke="#9a6519" stroke-width="1"/>
+<text id="text-180" x="1375" y="1795" font-size="15" fill="#9a6519" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">rc2</text>
+<rect x="1410" y="1777" width="52" height="25" rx="0" fill="#f1e5cc" stroke="#9a6519" stroke-width="1"/>
+<text id="text-181" x="1436" y="1795" font-size="15" fill="#9a6519" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">rc3</text>
+<path d="M1477 1790H1515" fill="none" stroke="#111820" stroke-width="1.6" stroke-linejoin="round" marker-end="url(#arrow-ink)"/>
+<rect x="1529" y="1777" width="262" height="25" rx="0" fill="#f1e5cc" stroke="#9a6519" stroke-width="1.3"/>
+<text id="text-182" x="1542" y="1795" font-size="16" fill="#9a6519" font-weight="700" text-anchor="start" font-family="'Courier New', 'Liberation Mono', monospace">S03</text>
+<text id="text-183" x="1616" y="1795" font-size="16" fill="#9a6519" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">rc1</text>
+<text id="text-184" x="1678" y="1795" font-size="16" fill="#9a6519" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">rc2</text>
+<text id="text-185" x="1740" y="1795" font-size="16" fill="#9a6519" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">rc3</text>
+<path d="M1230 1816H1810" fill="none" stroke="#cbcfc6" stroke-width="1" stroke-linejoin="round"/>
+<text id="text-186" x="1234" y="1836" font-size="19" fill="#434950" font-weight="400" text-anchor="start">Pending records · &gt;128 KiB or elapsed &gt;10 ms</text>
+<rect x="1210" y="1885" width="620" height="64" rx="0" fill="#ffffff" stroke="#58636c" stroke-width="1.8"/>
+<rect x="1210" y="1885" width="5" height="64" rx="0" fill="#116448" stroke="#116448" stroke-width="0"/>
+<rect x="1230" y="1904" width="38" height="34" rx="0" fill="#116448" stroke="#116448" stroke-width="0"/>
+<text id="text-187" x="1249" y="1928" font-size="19" fill="#ffffff" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">13</text>
+<text id="text-188" x="1284" y="1929" font-size="27" fill="#111820" font-weight="700" text-anchor="start">Assign sequence number</text>
+<text id="text-189" x="1799" y="1927" font-size="22" fill="#116448" font-weight="700" text-anchor="end" font-family="'Courier New', 'Liberation Mono', monospace">n++</text>
+<rect x="1210" y="1989" width="620" height="126" rx="0" fill="#ffffff" stroke="#58636c" stroke-width="1.8"/>
+<rect x="1210" y="1989" width="5" height="126" rx="0" fill="#116448" stroke="#116448" stroke-width="0"/>
+<rect x="1230" y="2008" width="38" height="34" rx="0" fill="#116448" stroke="#116448" stroke-width="0"/>
+<text id="text-190" x="1249" y="2032" font-size="19" fill="#ffffff" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">14</text>
+<text id="text-191" x="1284" y="2033" font-size="27" fill="#111820" font-weight="700" text-anchor="start">Serialize with Borsh</text>
+<rect x="1234" y="2055" width="148" height="38" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="1"/>
+<text id="text-192" x="1308" y="2081" font-size="18" fill="#111820" font-weight="400" text-anchor="middle">metadata</text>
+<rect x="1444" y="2055" width="230" height="38" rx="0" fill="#e8f0eb" stroke="#79828a" stroke-width="1"/>
+<text id="text-193" x="1559" y="2081" font-size="17" fill="#111820" font-weight="400" text-anchor="middle">downstream socket records</text>
+<rect x="1674" y="2055" width="132" height="38" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="1"/>
+<text id="text-194" x="1740" y="2081" font-size="17" fill="#111820" font-weight="400" text-anchor="middle">payload size</text>
+<rect x="1210" y="2155" width="620" height="130" rx="0" fill="#ffffff" stroke="#58636c" stroke-width="1.8"/>
+<rect x="1210" y="2155" width="5" height="130" rx="0" fill="#116448" stroke="#116448" stroke-width="0"/>
+<rect x="1230" y="2174" width="38" height="34" rx="0" fill="#116448" stroke="#116448" stroke-width="0"/>
+<text id="text-195" x="1249" y="2198" font-size="19" fill="#ffffff" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">15</text>
+<text id="text-196" x="1284" y="2199" font-size="27" fill="#111820" font-weight="700" text-anchor="start">Encrypt</text>
+<text id="text-197" x="1806" y="2198" font-size="17" fill="#434950" font-weight="400" text-anchor="end">ChaCha20-Poly1305</text>
+<rect x="1234" y="2220" width="342" height="42" rx="0" fill="#1c2b3b" stroke="#79828a" stroke-width="1"/>
+<text id="text-198" x="1405" y="2248" font-size="18" fill="#ffffff" font-weight="400" text-anchor="middle">ciphertext</text>
+<rect x="1576" y="2220" width="126" height="42" rx="0" fill="#dce9e0" stroke="#79828a" stroke-width="1"/>
+<text id="text-199" x="1639" y="2248" font-size="17" fill="#111820" font-weight="400" text-anchor="middle">tag · 16 B</text>
+<rect x="1702" y="2220" width="104" height="42" rx="0" fill="#eaedef" stroke="#79828a" stroke-width="1"/>
+<text id="text-200" x="1754" y="2248" font-size="15" fill="#111820" font-weight="400" text-anchor="middle">nonce · 12 B</text>
+<rect x="90" y="1450" width="620" height="145" rx="0" fill="#ffffff" stroke="#58636c" stroke-width="1.8"/>
+<rect x="90" y="1450" width="5" height="145" rx="0" fill="#116448" stroke="#116448" stroke-width="0"/>
+<rect x="110" y="1469" width="38" height="34" rx="0" fill="#116448" stroke="#116448" stroke-width="0"/>
+<text id="text-201" x="129" y="1493" font-size="19" fill="#ffffff" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">20</text>
+<text id="text-202" x="164" y="1494" font-size="27" fill="#111820" font-weight="700" text-anchor="start">Write local TCP</text>
+<text id="text-203" x="133" y="1528" font-size="18" fill="#2559a6" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">S01</text>
+<path d="M167 1521H641" fill="none" stroke="#2559a6" stroke-width="2"/>
+<rect x="196" y="1510" width="144" height="23" fill="#e3e9f2" stroke="#2559a6" stroke-width="1"/>
+<text id="text-204" x="268" y="1527" font-size="16" fill="#2559a6" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">ra1</text>
+<rect x="340" y="1510" width="144" height="23" fill="#e3e9f2" stroke="#2559a6" stroke-width="1"/>
+<text id="text-205" x="412" y="1527" font-size="16" fill="#2559a6" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">ra2</text>
+<rect x="484" y="1510" width="144" height="23" fill="#e3e9f2" stroke="#2559a6" stroke-width="1"/>
+<text id="text-206" x="556" y="1527" font-size="16" fill="#2559a6" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">ra3</text>
+<text id="text-207" x="133" y="1556" font-size="18" fill="#14755c" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">S02</text>
+<path d="M167 1549H641" fill="none" stroke="#14755c" stroke-width="2"/>
+<rect x="196" y="1538" width="144" height="23" fill="#e0ebe1" stroke="#14755c" stroke-width="1"/>
+<text id="text-208" x="268" y="1555" font-size="16" fill="#14755c" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">rb1</text>
+<rect x="340" y="1538" width="144" height="23" fill="#e0ebe1" stroke="#14755c" stroke-width="1"/>
+<text id="text-209" x="412" y="1555" font-size="16" fill="#14755c" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">rb2</text>
+<rect x="484" y="1538" width="144" height="23" fill="#e0ebe1" stroke="#14755c" stroke-width="1"/>
+<text id="text-210" x="556" y="1555" font-size="16" fill="#14755c" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">rb3</text>
+<text id="text-211" x="133" y="1584" font-size="18" fill="#9a6519" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">S03</text>
+<path d="M167 1577H641" fill="none" stroke="#9a6519" stroke-width="2"/>
+<rect x="196" y="1566" width="144" height="23" fill="#f1e5cc" stroke="#9a6519" stroke-width="1"/>
+<text id="text-212" x="268" y="1583" font-size="16" fill="#9a6519" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">rc1</text>
+<rect x="340" y="1566" width="144" height="23" fill="#f1e5cc" stroke="#9a6519" stroke-width="1"/>
+<text id="text-213" x="412" y="1583" font-size="16" fill="#9a6519" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">rc2</text>
+<rect x="484" y="1566" width="144" height="23" fill="#f1e5cc" stroke="#9a6519" stroke-width="1"/>
+<text id="text-214" x="556" y="1583" font-size="16" fill="#9a6519" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">rc3</text>
+<rect x="90" y="1635" width="620" height="210" rx="0" fill="#ffffff" stroke="#58636c" stroke-width="1.8"/>
+<rect x="90" y="1635" width="5" height="210" rx="0" fill="#116448" stroke="#116448" stroke-width="0"/>
+<rect x="110" y="1654" width="38" height="34" rx="0" fill="#116448" stroke="#116448" stroke-width="0"/>
+<text id="text-215" x="129" y="1678" font-size="19" fill="#ffffff" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">19</text>
+<text id="text-216" x="164" y="1679" font-size="27" fill="#111820" font-weight="700" text-anchor="start">Route records by socket ID</text>
+<rect x="116" y="1707" width="232" height="94" rx="0" fill="#f1f2f4" stroke="#79828a" stroke-width="1"/>
+<rect x="125" y="1716" width="214" height="22" rx="0" fill="#e3e9f2" stroke="#2559a6" stroke-width="0.8"/>
+<text id="text-217" x="136" y="1732" font-size="15" fill="#2559a6" font-weight="700" text-anchor="start" font-family="'Courier New', 'Liberation Mono', monospace">S01</text>
+<text id="text-218" x="236" y="1732" font-size="15" fill="#2559a6" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">ra1  ra2  ra3</text>
+<path d="M349 1727H371V1719H415" fill="none" stroke="#2559a6" stroke-width="1.8" stroke-linejoin="round"/>
+<rect x="422" y="1707" width="246" height="25" rx="0" fill="#e3e9f2" stroke="#2559a6" stroke-width="1.2"/>
+<text id="text-219" x="435" y="1725" font-size="16" fill="#2559a6" font-weight="700" text-anchor="start" font-family="'Courier New', 'Liberation Mono', monospace">S01</text>
+<text id="text-220" x="562" y="1725" font-size="16" fill="#2559a6" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">ra1  ra2  ra3</text>
+<rect x="125" y="1742" width="214" height="22" rx="0" fill="#e0ebe1" stroke="#14755c" stroke-width="0.8"/>
+<text id="text-221" x="136" y="1758" font-size="15" fill="#14755c" font-weight="700" text-anchor="start" font-family="'Courier New', 'Liberation Mono', monospace">S02</text>
+<text id="text-222" x="236" y="1758" font-size="15" fill="#14755c" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">rb1  rb2  rb3</text>
+<path d="M349 1753H379V1754H415" fill="none" stroke="#14755c" stroke-width="1.8" stroke-linejoin="round"/>
+<rect x="422" y="1742" width="246" height="25" rx="0" fill="#e0ebe1" stroke="#14755c" stroke-width="1.2"/>
+<text id="text-223" x="435" y="1760" font-size="16" fill="#14755c" font-weight="700" text-anchor="start" font-family="'Courier New', 'Liberation Mono', monospace">S02</text>
+<text id="text-224" x="562" y="1760" font-size="16" fill="#14755c" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">rb1  rb2  rb3</text>
+<rect x="125" y="1768" width="214" height="22" rx="0" fill="#f1e5cc" stroke="#9a6519" stroke-width="0.8"/>
+<text id="text-225" x="136" y="1784" font-size="15" fill="#9a6519" font-weight="700" text-anchor="start" font-family="'Courier New', 'Liberation Mono', monospace">S03</text>
+<text id="text-226" x="236" y="1784" font-size="15" fill="#9a6519" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">rc1  rc2  rc3</text>
+<path d="M349 1779H387V1789H415" fill="none" stroke="#9a6519" stroke-width="1.8" stroke-linejoin="round"/>
+<rect x="422" y="1777" width="246" height="25" rx="0" fill="#f1e5cc" stroke="#9a6519" stroke-width="1.2"/>
+<text id="text-227" x="435" y="1795" font-size="16" fill="#9a6519" font-weight="700" text-anchor="start" font-family="'Courier New', 'Liberation Mono', monospace">S03</text>
+<text id="text-228" x="562" y="1795" font-size="16" fill="#9a6519" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">rc1  rc2  rc3</text>
+<path d="M110 1816H690" fill="none" stroke="#cbcfc6" stroke-width="1" stroke-linejoin="round"/>
+<text id="text-229" x="114" y="1836" font-size="17" fill="#434950" font-weight="400" text-anchor="start">Socket ID → local writer channel</text>
+<rect x="90" y="1885" width="620" height="64" rx="0" fill="#ffffff" stroke="#58636c" stroke-width="1.8"/>
+<rect x="90" y="1885" width="5" height="64" rx="0" fill="#116448" stroke="#116448" stroke-width="0"/>
+<rect x="110" y="1904" width="38" height="34" rx="0" fill="#116448" stroke="#116448" stroke-width="0"/>
+<text id="text-230" x="129" y="1928" font-size="19" fill="#ffffff" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">18</text>
+<text id="text-231" x="164" y="1929" font-size="27" fill="#111820" font-weight="700" text-anchor="start">Wait for sequence number</text>
+<text id="text-232" x="679" y="1927" font-size="22" fill="#116448" font-weight="700" text-anchor="end" font-family="'Courier New', 'Liberation Mono', monospace">n = next</text>
+<rect x="90" y="1989" width="620" height="126" rx="0" fill="#ffffff" stroke="#58636c" stroke-width="1.8"/>
+<rect x="90" y="1989" width="5" height="126" rx="0" fill="#116448" stroke="#116448" stroke-width="0"/>
+<rect x="110" y="2008" width="38" height="34" rx="0" fill="#116448" stroke="#116448" stroke-width="0"/>
+<text id="text-233" x="129" y="2032" font-size="19" fill="#ffffff" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">17</text>
+<text id="text-234" x="164" y="2033" font-size="27" fill="#111820" font-weight="700" text-anchor="start">Deserialize with Borsh</text>
+<rect x="114" y="2055" width="148" height="38" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="1"/>
+<text id="text-235" x="188" y="2081" font-size="18" fill="#111820" font-weight="400" text-anchor="middle">metadata</text>
+<rect x="324" y="2055" width="230" height="38" rx="0" fill="#e8f0eb" stroke="#79828a" stroke-width="1"/>
+<text id="text-236" x="439" y="2081" font-size="17" fill="#111820" font-weight="400" text-anchor="middle">downstream socket records</text>
+<rect x="554" y="2055" width="132" height="38" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="1"/>
+<text id="text-237" x="620" y="2081" font-size="17" fill="#111820" font-weight="400" text-anchor="middle">payload size</text>
+<rect x="90" y="2155" width="620" height="130" rx="0" fill="#ffffff" stroke="#58636c" stroke-width="1.8"/>
+<rect x="90" y="2155" width="5" height="130" rx="0" fill="#116448" stroke="#116448" stroke-width="0"/>
+<rect x="110" y="2174" width="38" height="34" rx="0" fill="#116448" stroke="#116448" stroke-width="0"/>
+<text id="text-238" x="129" y="2198" font-size="19" fill="#ffffff" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">16</text>
+<text id="text-239" x="164" y="2199" font-size="27" fill="#111820" font-weight="700" text-anchor="start">Verify and decrypt</text>
+<text id="text-240" x="686" y="2198" font-size="17" fill="#434950" font-weight="400" text-anchor="end">ChaCha20-Poly1305</text>
+<rect x="114" y="2220" width="342" height="42" rx="0" fill="#1c2b3b" stroke="#79828a" stroke-width="1"/>
+<text id="text-241" x="285" y="2248" font-size="18" fill="#ffffff" font-weight="400" text-anchor="middle">ciphertext</text>
+<rect x="456" y="2220" width="126" height="42" rx="0" fill="#dce9e0" stroke="#79828a" stroke-width="1"/>
+<text id="text-242" x="519" y="2248" font-size="17" fill="#111820" font-weight="400" text-anchor="middle">tag · 16 B</text>
+<rect x="582" y="2220" width="104" height="42" rx="0" fill="#eaedef" stroke="#79828a" stroke-width="1"/>
+<text id="text-243" x="634" y="2248" font-size="15" fill="#111820" font-weight="400" text-anchor="middle">nonce · 12 B</text>
+<path d="M1520 1595V1631" fill="none" stroke="#116448" stroke-width="3" stroke-linejoin="round" marker-end="url(#arrow-teal)"/>
+<path d="M400 1635V1599" fill="none" stroke="#116448" stroke-width="3" stroke-linejoin="round" marker-end="url(#arrow-teal)"/>
+<path d="M1520 1845V1881" fill="none" stroke="#116448" stroke-width="3" stroke-linejoin="round" marker-end="url(#arrow-teal)"/>
+<path d="M400 1885V1849" fill="none" stroke="#116448" stroke-width="3" stroke-linejoin="round" marker-end="url(#arrow-teal)"/>
+<path d="M1520 1949V1989" fill="none" stroke="#116448" stroke-width="3"/>
+<rect x="1488" y="1955" width="64" height="24" fill="#ffffff" stroke="#116448" stroke-width="1.8"/>
+<path d="M1509 1955V1979M1530 1955V1979" stroke="#116448" stroke-width="1"/>
+<text id="text-244" x="1570" y="1975" font-size="18" fill="#434950">Response queue</text>
+<path d="M1182 2044V1967H1482" fill="none" stroke="#111820" stroke-width="1.8" stroke-dasharray="5 5" marker-end="url(#arrow-ink)"/>
+<path d="M400 1989V1953" fill="none" stroke="#116448" stroke-width="3" stroke-linejoin="round" marker-end="url(#arrow-teal)"/>
+<path d="M1520 2115V2151" fill="none" stroke="#116448" stroke-width="3" stroke-linejoin="round" marker-end="url(#arrow-teal)"/>
+<path d="M400 2155V2119" fill="none" stroke="#116448" stroke-width="3" stroke-linejoin="round" marker-end="url(#arrow-teal)"/>
+<path d="M723 1635H738V2285H723" fill="none" stroke="#62897c" stroke-width="2.5" stroke-linejoin="round"/>
+<text id="text-245" x="710" y="1624" font-size="19" fill="#434950" font-weight="400" text-anchor="end">Parallel download workers</text>
+<text id="text-246" x="1210" y="2142" font-size="19" fill="#434950" font-weight="400" text-anchor="start">GET handlers</text>
+<path d="M1207 1989H1198V2285H1207" fill="none" stroke="#62897c" stroke-width="2.5" stroke-linejoin="round"/>
+<rect x="825" y="1450" width="270" height="395" rx="0" fill="#ffffff" stroke="#626c75" stroke-width="1.3"/>
+<text id="text-247" x="845" y="1484" font-size="17" fill="#111820" font-weight="700" letter-spacing="1.6">SOCKET RECORD</text>
+<rect x="841" y="1505" width="238" height="42" rx="0" fill="#f2f3f3" stroke="#a4ada7" stroke-width="1"/>
+<text id="text-248" x="852" y="1532" font-size="17" fill="#111820" font-weight="400" text-anchor="start">socket ID</text>
+<text id="text-249" x="1067" y="1532" font-size="16" fill="#434950" font-weight="400" text-anchor="end" font-family="'Courier New', 'Liberation Mono', monospace">u32</text>
+<rect x="841" y="1547" width="238" height="42" rx="0" fill="#f2f3f3" stroke="#a4ada7" stroke-width="1"/>
+<text id="text-250" x="852" y="1574" font-size="17" fill="#111820" font-weight="400" text-anchor="start">destination IPv4</text>
+<text id="text-251" x="1067" y="1574" font-size="16" fill="#434950" font-weight="400" text-anchor="end" font-family="'Courier New', 'Liberation Mono', monospace">u32</text>
+<rect x="841" y="1589" width="238" height="42" rx="0" fill="#f2f3f3" stroke="#a4ada7" stroke-width="1"/>
+<text id="text-252" x="852" y="1616" font-size="17" fill="#111820" font-weight="400" text-anchor="start">destination port</text>
+<text id="text-253" x="1067" y="1616" font-size="16" fill="#434950" font-weight="400" text-anchor="end" font-family="'Courier New', 'Liberation Mono', monospace">u16</text>
+<rect x="841" y="1631" width="238" height="42" rx="0" fill="#f2f3f3" stroke="#a4ada7" stroke-width="1"/>
+<text id="text-254" x="852" y="1658" font-size="17" fill="#111820" font-weight="400" text-anchor="start">payload length</text>
+<text id="text-255" x="1067" y="1658" font-size="16" fill="#434950" font-weight="400" text-anchor="end" font-family="'Courier New', 'Liberation Mono', monospace">u32</text>
+<rect x="841" y="1673" width="238" height="42" rx="0" fill="#e8f0eb" stroke="#a4ada7" stroke-width="1"/>
+<text id="text-256" x="852" y="1700" font-size="17" fill="#111820" font-weight="400" text-anchor="start">payload</text>
+<text id="text-257" x="1067" y="1700" font-size="16" fill="#434950" font-weight="400" text-anchor="end" font-family="'Courier New', 'Liberation Mono', monospace">bytes</text>
+<rect x="841" y="1715" width="238" height="42" rx="0" fill="#f2f3f3" stroke="#a4ada7" stroke-width="1"/>
+<text id="text-258" x="852" y="1742" font-size="17" fill="#111820" font-weight="400" text-anchor="start">termination flags</text>
+<text id="text-259" x="1067" y="1742" font-size="16" fill="#434950" font-weight="400" text-anchor="end" font-family="'Courier New', 'Liberation Mono', monospace">1–2 B</text>
+<text id="text-260" x="845" y="1788" font-size="18" fill="#434950" font-weight="400" text-anchor="start">Borsh · little-endian</text>
+<text id="text-261" x="845" y="1819" font-size="18" fill="#434950" font-weight="400" text-anchor="start">No alignment padding</text>
+<text id="text-262" x="829" y="1924" font-size="17" fill="#116448" font-weight="700" letter-spacing="1.6">DOWNLOAD REQUEST</text>
+<text id="text-263" x="960" y="1978" font-size="22" fill="#111820" font-weight="700" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">GET /video/segment</text>
+<text id="text-264" x="960" y="2010" font-size="20" fill="#434950" font-weight="400" text-anchor="middle">Encrypted request body</text>
+<path d="M738 2044H1171" fill="none" stroke="#111820" stroke-width="2" stroke-linejoin="round" marker-end="url(#arrow-ink)" stroke-dasharray="7 7"/>
+<rect x="1174" y="2044" width="15" height="177" rx="0" fill="#d6e5d8" stroke="#116448" stroke-width="1.8"/>
+<text id="text-265" x="960" y="2089" font-size="23" fill="#116448" font-weight="700" text-anchor="middle">Request held open</text>
+<text id="text-266" x="960" y="2117" font-size="19" fill="#434950" font-weight="400" text-anchor="middle">until a batch is available</text>
+<text id="text-267" x="960" y="2175" font-size="22" fill="#116448" font-weight="700" text-anchor="middle">200 · encrypted batch</text>
+<path d="M1210 2221H716" fill="none" stroke="#116448" stroke-width="4" stroke-linejoin="round" marker-end="url(#arrow-teal)"/>
+<rect x="886" y="2204" width="43" height="34" rx="0" fill="#1c2b3b" stroke="#ffffff" stroke-width="2"/>
+<rect x="938" y="2204" width="43" height="34" rx="0" fill="#1c2b3b" stroke="#ffffff" stroke-width="2"/>
+<rect x="990" y="2204" width="43" height="34" rx="0" fill="#1c2b3b" stroke="#ffffff" stroke-width="2"/>
+<text id="text-268" x="960" y="2270" font-size="21" fill="#111820" font-weight="400" text-anchor="middle">Response → next GET</text>
+<text id="text-269" x="90" y="2311" font-size="18" fill="#434950" font-weight="400" text-anchor="start">Read and write halves share the same local sockets.</text>
+<text id="text-270" x="1210" y="2311" font-size="18" fill="#434950" font-weight="400" text-anchor="start">Read and write halves share the same remote sockets.</text>
+<rect x="262" y="1050" width="62" height="38" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="1"/>
+<text id="text-271" x="293" y="1076" font-size="16" fill="#111820" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">count</text>
+<rect x="114" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="127" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="140" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="153" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="166" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="179" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="192" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="205" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="218" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="231" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="244" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="257" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="270" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="283" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="296" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="309" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="322" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="335" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="348" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="361" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="374" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="387" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="400" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="413" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="426" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="439" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="452" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="465" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="478" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="491" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="504" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="517" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="530" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="543" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="556" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="569" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="582" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="595" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="608" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="621" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="634" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="647" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="660" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="673" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1382" y="1050" width="62" height="38" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="1"/>
+<text id="text-272" x="1413" y="1076" font-size="16" fill="#111820" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">count</text>
+<rect x="1234" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1247" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1260" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1273" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1286" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1299" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1312" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1325" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1338" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1351" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1364" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1377" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1390" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1403" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1416" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1429" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1442" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1455" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1468" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1481" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1494" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1507" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1520" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1533" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1546" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1559" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1572" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1585" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1598" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1611" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1624" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1637" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1650" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1663" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1676" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1689" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1702" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1715" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1728" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1741" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1754" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1767" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1780" y="1093" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1793" y="1093" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1382" y="2055" width="62" height="38" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="1"/>
+<text id="text-273" x="1413" y="2081" font-size="16" fill="#111820" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">count</text>
+<rect x="1234" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1247" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1260" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1273" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1286" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1299" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1312" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1325" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1338" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1351" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1364" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1377" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1390" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1403" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1416" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1429" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1442" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1455" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1468" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1481" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1494" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1507" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1520" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1533" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1546" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1559" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1572" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1585" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1598" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1611" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1624" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1637" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1650" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1663" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1676" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1689" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1702" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1715" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1728" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1741" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1754" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1767" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1780" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="1793" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="262" y="2055" width="62" height="38" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="1"/>
+<text id="text-274" x="293" y="2081" font-size="16" fill="#111820" font-weight="400" text-anchor="middle" font-family="'Courier New', 'Liberation Mono', monospace">count</text>
+<rect x="114" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="127" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="140" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="153" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="166" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="179" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="192" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="205" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="218" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="231" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="244" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="257" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="270" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="283" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="296" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="309" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="322" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="335" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="348" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="361" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="374" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="387" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="400" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="413" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="426" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="439" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="452" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="465" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="478" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="491" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="504" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="517" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="530" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="543" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="556" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="569" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="582" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="595" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="608" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="621" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="634" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="647" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<rect x="660" y="2098" width="13" height="11" rx="0" fill="#e9ecef" stroke="#79828a" stroke-width="0.6"/>
+<rect x="673" y="2098" width="13" height="11" rx="0" fill="#f1f1ed" stroke="#79828a" stroke-width="0.6"/>
+<path d="M40 2370H1880" fill="none" stroke="#111820" stroke-width="2"/>
+<path d="M40 2410H94" fill="none" stroke="#174994" stroke-width="3" marker-end="url(#arrow-blue)"/>
+<text id="footer-upload" x="112" y="2417" font-size="21" fill="#111820" font-weight="700">Upload</text>
+<path d="M260 2410H314" fill="none" stroke="#116448" stroke-width="3" marker-end="url(#arrow-teal)"/>
+<text id="footer-download" x="332" y="2417" font-size="21" fill="#111820" font-weight="700">Download</text>
+<path d="M520 2410H574" fill="none" stroke="#111820" stroke-width="2" marker-end="url(#arrow-ink)" stroke-dasharray="7 7"/>
+<text id="footer-poll" x="592" y="2417" font-size="21" fill="#111820" font-weight="700">Poll request</text>
+<text id="footer-illustrative" x="960" y="2417" font-size="19" fill="#434950">Socket identifiers and payload segments are illustrative.</text>
+<text id="footer-sequence" x="40" y="2470" font-size="19" fill="#434950">Sequence checks do not provide retransmission or recovery from missing batches.</text>
+<text id="footer-reference" x="1880" y="2470" font-size="18" fill="#111820" font-weight="700" text-anchor="end" font-family="'Courier New', 'Liberation Mono', monospace">01 / TRANSPORT</text>
+</svg>
